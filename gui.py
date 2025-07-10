@@ -9,6 +9,9 @@ Created on Tue Jul  8 10:18:43 2025
 import wx
 import wx.grid as gridlib
 import obsws_python as obs
+import os
+import json
+from PIL import Image, ImageOps
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -16,11 +19,13 @@ class OBS(object):
         self.host = host
         self.port = port
         self.password = password
-        self.cl = obs.ReqClient(host=host,port=port,password=password,timeout=3)
-        self.cl_events = obs.EventClient(host=host,port=port,password=password,timeout=3)
+    
+    def connect(self,event):
+        self.cl = obs.ReqClient(host=self.host,port=self.port,password=self.password,timeout=3)
+        self.cl_events = obs.EventClient(host=self.host,port=self.port,password=self.password,timeout=3)
         self.cl_events.callback.register(self.on_scene_list_changed)
         self.cl_events.callback.register(self.on_scene_transition_ended)
-     
+    
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
         self.parent.grid_panel.set_scene_choices()
@@ -54,14 +59,53 @@ class OBS(object):
 class GUI(wx.Frame):
     def __init__(self,title,obs_connection):
         super().__init__(parent=None,title=title)
-        self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
+        self.Bind(wx.EVT_CLOSE,self.on_close)
+        self.obs_connection = obs_connection
+        if obs_connection is not None:
+            self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
+        self.ribbon_panel = Ribbon(self)
         self.grid_panel = Grid(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self.ribbon_panel)
         sizer.Add(self.grid_panel, 1, wx.EXPAND)
         self.SetSizer(sizer)
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
+        
+    def on_close(self, event):
+        try:
+            if not os.path.isdir("data/settings"):
+                os.makedirs("data/settings")
+            with open("data/settings/obs_settings.json", "w") as file:
+                settings = {"host": self.obs_connection[0],
+                            "port": self.obs_connection[1],
+                            "password": self.obs_connection[2]}
+                json.dump(settings,file)
+        except Exception as e:
+            print("Error dumping json settings to file:", e)
+        finally:
+            self.Destroy()
+
+class Ribbon(wx.Panel):
+    def __init__(self, parent):
+        super().__init__(parent=parent)
+        self.parent = parent
+        self.sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.load_bitmaps()
+        self.SetSizer(self.sizer)
+        self.Layout()
+        
+    def load_bitmaps(self):
+        sys_appearance = wx.SystemSettings.GetAppearance()
+        if sys_appearance.IsDark():
+            filenames = ["./data/icons/dark/add-document.png", "./data/icons/dark/play.png", "./data/icons/dark/refresh.png", "./data/icons/dark/settings-sliders.png", "./data/icons/dark/stop.png"]
+        else:
+            filenames = ["./data/icons/light/add-document.png", "./data/icons/light/play.png", "./data/icons/light/refresh.png", "./data/icons/light/settings-sliders.png", "./data/icons/light/stop.png"]
+        for fname in filenames:
+            bitmap = wx.Bitmap(fname, wx.BITMAP_TYPE_PNG)
+            button = wx.BitmapButton(self, bitmap=bitmap)
+            self.sizer.Add(button, 1, wx.ALL | wx.EXPAND, 5)
         
 class Grid(wx.Panel):
     def __init__(self,parent):
@@ -122,32 +166,34 @@ class Grid(wx.Panel):
         self.grid.ForceRefresh()
      
     def set_scene_choices(self):
-        new_scene_choices = self.parent.obs_conn.get_scene_list()
-        current_selections = {}
-        for row in range(self.grid.GetNumberRows()):
-            current_value = self.grid.GetCellValue(row, 2)
-            current_selections[row] = current_value
-        for row in range(self.grid.GetNumberRows()):
-            editor = wx.grid.GridCellChoiceEditor(choices=new_scene_choices, allowOthers=False)
-            self.grid.SetCellEditor(row, 2, editor)
-            self.grid.SetCellValue(row, 2, "")
-            if current_selections[row] in new_scene_choices:
-                self.grid.SetCellValue(row, 2, current_selections[row])
-        self.grid.ForceRefresh()
+        if hasattr(self.parent, "obs_conn"):
+            new_scene_choices = self.parent.obs_conn.get_scene_list()
+            current_selections = {}
+            for row in range(self.grid.GetNumberRows()):
+                current_value = self.grid.GetCellValue(row, 2)
+                current_selections[row] = current_value
+            for row in range(self.grid.GetNumberRows()):
+                editor = wx.grid.GridCellChoiceEditor(choices=new_scene_choices, allowOthers=False)
+                self.grid.SetCellEditor(row, 2, editor)
+                self.grid.SetCellValue(row, 2, "")
+                if current_selections[row] in new_scene_choices:
+                    self.grid.SetCellValue(row, 2, current_selections[row])
+            self.grid.ForceRefresh()
         
     def set_transition_choices(self):
-        new_transition_choices = self.parent.obs_conn.get_transition_list()
-        current_selections = {}
-        for row in range(self.grid.GetNumberRows()):
-            current_value = self.grid.GetCellValue(row, 3)
-            current_selections[row] = current_value
-        for row in range(self.grid.GetNumberRows()):
-            editor = wx.grid.GridCellChoiceEditor(choices=new_transition_choices, allowOthers=False)
-            self.grid.SetCellEditor(row, 3, editor)
-            self.grid.SetCellValue(row, 3, "")
-            if current_selections[row] in new_transition_choices:
-                self.grid.SetCellValue(row, 3, current_selections[row])
-        self.grid.ForceRefresh()
+        if hasattr(self.parent, "obs_conn"):
+            new_transition_choices = self.parent.obs_conn.get_transition_list()
+            current_selections = {}
+            for row in range(self.grid.GetNumberRows()):
+                current_value = self.grid.GetCellValue(row, 3)
+                current_selections[row] = current_value
+            for row in range(self.grid.GetNumberRows()):
+                editor = wx.grid.GridCellChoiceEditor(choices=new_transition_choices, allowOthers=False)
+                self.grid.SetCellEditor(row, 3, editor)
+                self.grid.SetCellValue(row, 3, "")
+                if current_selections[row] in new_transition_choices:
+                    self.grid.SetCellValue(row, 3, current_selections[row])
+            self.grid.ForceRefresh()
      
     def on_label_right_click(self, event):
         row = event.GetRow()
@@ -217,11 +263,17 @@ class Grid(wx.Panel):
         else:
             event.Skip()
 
-
-            
+def load_obs_settings():
+    if os.path.isfile("/data/settings/obs_settings.json"):
+        with open("/data/settings/settings.json","r") as file:
+            settings = json.load(file)
+            obs_connection = (settings['obs_conn']['host'],settings['obs_conn']['port'],['obs_settings']['password'])
+            return obs_connection
+    return None
         
 if __name__ == "__main__":
-    obs_connection = ["10.10.1.29", 4455, "XdwGltOUzfaC8VvB"]
+    #obs_connection = ["10.10.1.29", 4455, "XdwGltOUzfaC8VvB"]
+    obs_connection = load_obs_settings()
     app = wx.App()
     frame = GUI("OBS Rundown",obs_connection)
     app.MainLoop()
