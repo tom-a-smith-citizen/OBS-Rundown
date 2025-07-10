@@ -1,0 +1,116 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Lower Third</title>
+  <style>
+    @font-face {
+      font-family: 'GothamBlack';
+      src: url('./fonts/Gotham XNarrow Black.otf') format('opentype');
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    #lower-third {
+      position: absolute;
+      bottom: 115px;
+      left: 60px;
+      display: flex;
+      justify-content: flex-start;
+      pointer-events: none;
+    }
+
+.banner {
+  position: relative; /* make it a positioning context for .blue-bar */
+  font-family: 'GothamBlack', sans-serif;
+  font-size: 2.5em;
+  background-color: white;
+  color: black;
+  width: 1540px;
+  height: 96px;
+  padding: 0.03em 0.5em 0.03em 0.3em;
+  box-shadow: none;
+  display: inline-block;
+  text-transform: uppercase;
+  transform-origin: top;
+  transform: scaleY(0);
+  opacity: 0;
+  transition: transform 1.2s ease-out, opacity 0.5s ease-out;
+}
+
+.blue-bar {
+  position: absolute;
+  bottom: 3px;
+  left: 2px;
+  right: 2px;
+  height: 10px;
+  background-color: #1d59c9;
+}
+    #lower-third.slide-in .banner {
+      transform: scaleY(1);
+      opacity: 1;
+    }
+
+    #lower-third.slide-out .banner {
+      transform: translateY(100%);
+      opacity: 0;
+      transition: transform 0.6s ease-in, opacity 0.6s ease-in;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="lower-third" class="hidden">
+    <div class="banner">
+  <span id="text"></span>
+  <div class="blue-bar"></div>
+</div>
+  </div>
+<script src="https://unpkg.com/fitty/dist/fitty.min.js"></script>
+<script>
+  const evtSource = new EventSource("super.php");
+  const lowerThird = document.getElementById("lower-third");
+  const textSpan = document.getElementById("text");
+
+  // Initialize fitty and save the instance
+  const fittyInstance = fitty(textSpan, { minSize: 10, maxSize: 80 });
+
+  evtSource.onmessage = function (event) {
+    const data = event.data.trim();
+
+    if (data === '*') {
+      // Animate banner out
+      lowerThird.classList.remove("slide-in");
+      lowerThird.classList.add("slide-out");
+    } else {
+      // Animate out first
+      lowerThird.classList.remove("slide-in");
+      lowerThird.classList.add("slide-out");
+
+      // Wait for animation to complete before updating text
+      setTimeout(() => {
+        textSpan.textContent = data;
+
+        // Resize the text to fit the banner
+        fittyInstance.fit();
+
+        // Animate back in
+        lowerThird.classList.remove("slide-out", "hidden");
+        lowerThird.classList.add("slide-in");
+      }, 650); // Match slide-out transition
+    }
+  };
+</script>
+
+</body>
+</html>

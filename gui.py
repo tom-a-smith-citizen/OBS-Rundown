@@ -11,7 +11,8 @@ import wx.grid as gridlib
 import obsws_python as obs
 import os
 import json
-from PIL import Image, ImageOps
+import platform
+import requests
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -21,10 +22,13 @@ class OBS(object):
         self.password = password
     
     def connect(self,event):
-        self.cl = obs.ReqClient(host=self.host,port=self.port,password=self.password,timeout=3)
-        self.cl_events = obs.EventClient(host=self.host,port=self.port,password=self.password,timeout=3)
+        print(f"Connecting to {self.host}:{self.port}")
+        self.cl = obs.ReqClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
+        self.cl_events = obs.EventClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
         self.cl_events.callback.register(self.on_scene_list_changed)
         self.cl_events.callback.register(self.on_scene_transition_ended)
+        self.parent.grid_panel.set_scene_choices()
+        self.parent.grid_panel.set_transition_choices()
     
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
@@ -46,23 +50,31 @@ class OBS(object):
         self.cl.set_current_scene_transition(transition)
      
     def get_scene_list(self):
-        resp = self.cl.get_scene_list()
-        scenes = [di.get("sceneName") for di in reversed(resp.scenes)]
-        return scenes
+        try:
+            resp = self.cl.get_scene_list()
+            scenes = [di.get("sceneName") for di in reversed(resp.scenes)]
+            return scenes
+        except Exception as e:
+            print("Couldn't load scene list:", e)
+            return []
     
     def get_transition_list(self):
-        resp = self.cl.get_scene_transition_list()
-        transitions = resp.transitions
-        transitions = [di.get("transitionName") for di in reversed(transitions)]
-        return transitions
+        try:
+            resp = self.cl.get_scene_transition_list()
+            transitions = resp.transitions
+            transitions = [di.get("transitionName") for di in reversed(transitions)]
+            return transitions
+        except Exception as e:
+            print("Couldn't load transition list:",e)
+            return []
 
 class GUI(wx.Frame):
-    def __init__(self,title,obs_connection):
+    def __init__(self,title,obs_connection,super_endpoint):
         super().__init__(parent=None,title=title)
         self.Bind(wx.EVT_CLOSE,self.on_close)
+        self.super_endpoint = super_endpoint
         self.obs_connection = obs_connection
-        if obs_connection is not None:
-            self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
+        self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
         self.ribbon_panel = Ribbon(self)
         self.grid_panel = Grid(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -78,12 +90,20 @@ class GUI(wx.Frame):
             if not os.path.isdir("data/settings"):
                 os.makedirs("data/settings")
             with open("data/settings/obs_settings.json", "w") as file:
-                settings = {"host": self.obs_connection[0],
-                            "port": self.obs_connection[1],
-                            "password": self.obs_connection[2]}
+                settings = {"host": self.obs_conn.host,
+                            "port": self.obs_conn.port,
+                            "password": self.obs_conn.password}
                 json.dump(settings,file)
+                print("Json saved.")
         except Exception as e:
             print("Error dumping json settings to file:", e)
+        try:
+            if not os.path.isdir("data/settings"):
+                os.makedirs("data/settings")
+            with open("data/settings/super_endpoint.json","w") as file:
+                settings = {"endpoint": self.super_endpoint}
+                json.dump(settings,file)
+                print("Json saved.")
         finally:
             self.Destroy()
 
@@ -92,13 +112,14 @@ class Ribbon(wx.Panel):
         super().__init__(parent=parent)
         self.parent = parent
         self.sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.is_playing = False
         self.load_bitmaps()
         self.SetSizer(self.sizer)
         self.Layout()
         
-    def load_bitmaps(self):
+    def old_load_bitmaps(self):
         sys_appearance = wx.SystemSettings.GetAppearance()
-        if sys_appearance.IsDark():
+        if sys_appearance.IsDark() and platform.system() != "Windows":
             filenames = ["./data/icons/dark/add-document.png", "./data/icons/dark/play.png", "./data/icons/dark/refresh.png", "./data/icons/dark/settings-sliders.png", "./data/icons/dark/stop.png"]
         else:
             filenames = ["./data/icons/light/add-document.png", "./data/icons/light/play.png", "./data/icons/light/refresh.png", "./data/icons/light/settings-sliders.png", "./data/icons/light/stop.png"]
@@ -106,6 +127,61 @@ class Ribbon(wx.Panel):
             bitmap = wx.Bitmap(fname, wx.BITMAP_TYPE_PNG)
             button = wx.BitmapButton(self, bitmap=bitmap)
             self.sizer.Add(button, 1, wx.ALL | wx.EXPAND, 5)
+            
+    def load_bitmaps(self):
+        sys_appearance = wx.SystemSettings.GetAppearance()
+        if sys_appearance.IsDark() and platform.system() != "Windows":
+            self.directory = "./data/icons/dark"
+        else:
+            self.directory = "./data/icons/light"
+        self.button_play = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
+        self.button_play.Bind(wx.EVT_BUTTON,self.on_play)
+        self.sizer.Add(self.button_play,1,wx.ALL)
+        self.button_settings = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"settings-sliders.png"),wx.BITMAP_TYPE_PNG))
+        self.button_settings.Bind(wx.EVT_BUTTON,self.on_settings)
+        self.sizer.Add(self.button_settings,1,wx.ALL)
+        self.button_open = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"open.png"),wx.BITMAP_TYPE_PNG))
+        self.button_open.Bind(wx.EVT_BUTTON, self.on_open)
+        self.sizer.Add(self.button_open,1,wx.ALL)
+        self.button_save = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"save.png"),wx.BITMAP_TYPE_PNG))
+        self.button_save.Bind(wx.EVT_BUTTON,self.on_save)
+        self.sizer.Add(self.button_save,1,wx.ALL)
+        
+    def on_play(self,event):
+        self.is_playing = not self.is_playing
+        if self.is_playing:
+            print("Now Playing...")
+            self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"stop.png"),wx.BITMAP_TYPE_PNG))
+            self.parent.obs_conn.connect(wx.Event)
+        else:
+            print("Stopped.")
+            self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
+        self.parent.grid_panel.grid.SetFocus()
+        
+    def on_settings(self,event):
+        SettingsUI(self.parent)
+        
+    def on_open(self, event):
+        with wx.FileDialog(self, "Open rundown", wildcard="JSON files (*.json)|*.json",defaultDir="./saved_rundowns",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() == wx.ID_CANCEL:
+                return
+            pathname = fileDialog.GetPath()
+            try:
+                self.parent.grid_panel.load_rundown(pathname)
+            except IOError:
+                wx.LogError(f"Cannot open file '{pathname}'.")
+
+    def on_save(self,event):
+        with wx.FileDialog(self, "Save rundown", wildcard="JSON files (*.json)|*.json", defaultDir="./saved_rundowns",style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+            if fileDialog.ShowModal() == wx.ID_CANCEL:
+                return     # the user changed their mind
+            # save the current contents in the file
+            pathname = fileDialog.GetPath()
+            try:
+                self.parent.grid_panel.save_rundown(wx.Event, pathname)
+            except IOError:
+                wx.LogError("Cannot save current data in file '%s'." % pathname)
         
 class Grid(wx.Panel):
     def __init__(self,parent):
@@ -127,6 +203,50 @@ class Grid(wx.Panel):
         self.SetSizer(sizer)
         self.highlight_row(0, wx.Colour(0, 255, 0))  # Green
         self.grid.SetFocus()
+    
+    def save_rundown(self, event, filename):
+        rundown = {}
+        for row in range(self.grid.GetNumberRows()):
+            rundown[str(row)] = {
+                'slug': self.grid.GetCellValue(row, 0),
+                'super': self.grid.GetCellValue(row, 1),
+                'scene': self.grid.GetCellValue(row, 2),
+                'transition': self.grid.GetCellValue(row, 3),
+                }
+        if not os.path.isdir("./saved_rundowns"):
+            os.makedirs("./saved_rundowns")
+        with open(filename, "w") as file:
+            json.dump(rundown, file, indent=2)
+            print(f"Saved rundown to {filename}")
+    
+    def load_rundown(self, filename):
+        try:
+            with open(filename, "r") as file:
+                rundown = json.load(file)
+
+            self.grid.ClearGrid()
+            existing_rows = self.grid.GetNumberRows()
+            needed_rows = len(rundown)
+
+            if needed_rows > existing_rows:
+                self.grid.AppendRows(needed_rows - existing_rows)
+            elif needed_rows < existing_rows:
+                self.grid.DeleteRows(0, existing_rows - needed_rows)
+
+            for row_str, data in rundown.items():
+                row = int(row_str)
+                self.grid.SetCellValue(row, 0, data.get('slug', ''))
+                self.grid.SetCellValue(row, 1, data.get('super', ''))
+                self.grid.SetCellValue(row, 2, data.get('scene', ''))
+                self.grid.SetCellValue(row, 3, data.get('transition', ''))
+
+            self.set_scene_choices()
+            self.set_transition_choices()
+            self.grid.ForceRefresh()
+            print(f"Loaded rundown from {filename}")
+        except Exception as e:
+            wx.LogError(f"Could not load rundown from file '{filename}': {e}")
+
     
     def auto_resize_columns(self, event=None):
         total_width = self.grid.GetSize().width
@@ -212,7 +332,12 @@ class Grid(wx.Panel):
             self.grid.SetCellBackgroundColour(row, col, wx.GREEN)
 
         self.grid.ForceRefresh()
-       
+    
+    def send_super_text(self,text):
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        data = f"text={text}"
+        requests.post(self.parent.super_endpoint,headers=headers,data=data)
+    
     def on_key_down(self, event):
         code = event.GetKeyCode()
         if event.ControlDown() and code == ord('I'):
@@ -235,6 +360,7 @@ class Grid(wx.Panel):
 
             #Step 1.5 Set Preview
             name = self.grid.GetCellValue(green_row,2)
+            super_text = self.grid.GetCellValue(green_row,1)
             if name != "":
                 self.parent.obs_conn.cl.set_current_preview_scene(name)
 
@@ -259,21 +385,92 @@ class Grid(wx.Panel):
 
             # Trigger OBS transition
             self.parent.obs_conn.cl.trigger_studio_mode_transition()
+            if super_text.strip() != "":
+                print(super_text)
+                self.send_super_text(super_text)
 
         else:
             event.Skip()
 
+class SettingsUI(wx.Frame):
+    def __init__(self,parent):
+        super().__init__(parent=parent, title="Settings")
+        self.parent = parent
+        self.panel_main = wx.Panel(self)
+        self.sizer_main = wx.FlexGridSizer(5,2,10,10)
+        self.sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
+        self.label_host = wx.StaticText(self.panel_main,label="Host")
+        self.field_host = wx.TextCtrl(self.panel_main)
+        self.field_host.SetValue(self.parent.obs_conn.host)
+        self.label_port = wx.StaticText(self.panel_main,label="Port")
+        self.field_port = wx.TextCtrl(self.panel_main)
+        self.field_port.SetValue(str(self.parent.obs_conn.port))
+        self.label_password = wx.StaticText(self.panel_main,label="Password")
+        self.field_password = wx.TextCtrl(self.panel_main,style=wx.TE_PASSWORD)
+        self.field_password.SetValue(self.parent.obs_conn.password)
+        self.label_endpoint = wx.StaticText(self.panel_main,label="Super Endpoint")
+        self.field_endpoint = wx.TextCtrl(self.panel_main)
+        self.field_endpoint.SetValue(self.parent.super_endpoint)
+        self.button_apply = wx.Button(self.panel_main,label="Apply")
+        self.button_apply.Bind(wx.EVT_BUTTON,self.on_apply)
+        self.button_cancel = wx.Button(self.panel_main,label="Cancel")
+        self.button_cancel.Bind(wx.EVT_BUTTON,self.on_cancel)
+        self.sizer_buttons.AddMany([(self.button_apply,1,wx.ALL),
+                                    (self.button_cancel,1,wx.ALL)])
+        self.sizer_main.AddMany([(self.label_host,1,wx.ALL|wx.EXPAND),
+                                 (self.field_host,1,wx.ALL|wx.EXPAND),
+                                 (self.label_port,1,wx.ALL|wx.EXPAND),
+                                 (self.field_port,1,wx.ALL|wx.EXPAND),
+                                 (self.label_password,1,wx.ALL|wx.EXPAND),
+                                 (self.field_password,1,wx.ALL|wx.EXPAND),
+                                 (self.label_endpoint,1,wx.ALL|wx.EXPAND),
+                                 (self.field_endpoint,1,wx.ALL|wx.EXPAND),
+                                 (self.sizer_buttons,1,wx.ALL)])
+        self.panel_main.SetSizerAndFit(self.sizer_main)
+        self.Layout()
+        self.Show()
+        
+    def on_apply(self, event):
+        host = self.field_host.GetValue()
+        port = self.field_port.GetValue()
+        password = self.field_password.GetValue()
+        endpoint = self.field_endpoint.GetValue()
+        if host == "" or port == "" or password == "" or endpoint == "":
+            dlg = wx.MessageDialog(self,message="Fields cannot be left empty. Make sure all fields are filled out and try again.",caption="Fields Cannot Be Empty",style=wx.OK|wx.ICON_ERROR)
+            dlg.ShowModal()
+        else:
+            self.parent.obs_conn.host = host
+            self.parent.obs_conn.port = port
+            self.parent.obs_conn.password = password
+            self.parent.super_endpoint = endpoint
+        self.Destroy()
+            
+            
+    def on_cancel(self, event):
+        self.Destroy()
+        
 def load_obs_settings():
-    if os.path.isfile("/data/settings/obs_settings.json"):
-        with open("/data/settings/settings.json","r") as file:
+    if os.path.isfile("data/settings/obs_settings.json"):
+        with open("data/settings/obs_settings.json","r") as file:
             settings = json.load(file)
-            obs_connection = (settings['obs_conn']['host'],settings['obs_conn']['port'],['obs_settings']['password'])
+            obs_connection = (settings['host'],int(settings['port']),settings['password'])
             return obs_connection
-    return None
+    else:
+        return ("localhost", 4455, "password")
+    
+def load_super_endpoint():
+    if os.path.isfile("data/settings/super_endpoint.json"):
+        with open("data/settings/super_endpoint.json","r") as file:
+            settings = json.load(file)
+            super_endpoint = settings['endpoint']
+            return super_endpoint
+    else:
+        return "N/A"
         
 if __name__ == "__main__":
     #obs_connection = ["10.10.1.29", 4455, "XdwGltOUzfaC8VvB"]
     obs_connection = load_obs_settings()
+    super_endpoint = load_super_endpoint()
     app = wx.App()
-    frame = GUI("OBS Rundown",obs_connection)
+    frame = GUI("OBS Rundown",obs_connection,super_endpoint)
     app.MainLoop()
