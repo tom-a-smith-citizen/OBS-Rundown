@@ -112,9 +112,9 @@ class GUI(wx.Frame):
         menubar = wx.MenuBar()
         
         file = wx.Menu()
-        new = wx.MenuItem(file,text="New")
+        new = file.Append(wx.ID_ANY,"New","New Rundown")
         self.Bind(wx.EVT_MENU, self.on_new, new)
-        file.Append(new)
+        
         
         menubar.Append(file,"File")
         
