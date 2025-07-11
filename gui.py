@@ -77,6 +77,7 @@ class GUI(wx.Frame):
         self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
         self.ribbon_panel = Ribbon(self)
         self.grid_panel = Grid(self)
+        self.build_menubar()
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.ribbon_panel)
         sizer.Add(self.grid_panel, 1, wx.EXPAND)
@@ -106,6 +107,22 @@ class GUI(wx.Frame):
                 print("Json saved.")
         finally:
             self.Destroy()
+            
+    def build_menubar(self):
+        menubar = wx.MenuBar()
+        
+        file = wx.Menu()
+        new = wx.MenuItem(file,text="New")
+        self.Bind(wx.EVT_MENU, self.on_new, new)
+        file.Append(new)
+        
+        menubar.Append(file,"File")
+        
+        self.SetMenuBar(menubar)
+        
+    def on_new(self, event):
+        GUI("OBS Rundown",(self.obs_connection[0],self.obs_connection[1],self.obs_connection[2]),self.super_endpoint)
+        
 
 class Ribbon(wx.Panel):
     def __init__(self, parent):
@@ -140,12 +157,18 @@ class Ribbon(wx.Panel):
         self.button_settings = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"settings-sliders.png"),wx.BITMAP_TYPE_PNG))
         self.button_settings.Bind(wx.EVT_BUTTON,self.on_settings)
         self.sizer.Add(self.button_settings,1,wx.ALL)
+        self.button_new = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"add-document.png"),wx.BITMAP_TYPE_PNG))
+        self.button_new.Bind(wx.EVT_BUTTON,self.parent.on_new)
+        self.sizer.Add(self.button_new,1,wx.ALL)
         self.button_open = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"open.png"),wx.BITMAP_TYPE_PNG))
         self.button_open.Bind(wx.EVT_BUTTON, self.on_open)
         self.sizer.Add(self.button_open,1,wx.ALL)
         self.button_save = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"save.png"),wx.BITMAP_TYPE_PNG))
         self.button_save.Bind(wx.EVT_BUTTON,self.on_save)
         self.sizer.Add(self.button_save,1,wx.ALL)
+        self.button_refresh = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"refresh.png"),wx.BITMAP_TYPE_PNG))
+        self.button_refresh.Bind(wx.EVT_BUTTON, self.on_refresh)
+        self.sizer.Add(self.button_refresh,1,wx.ALL)
         
     def on_play(self,event):
         self.is_playing = not self.is_playing
@@ -182,6 +205,10 @@ class Ribbon(wx.Panel):
                 self.parent.grid_panel.save_rundown(wx.Event, pathname)
             except IOError:
                 wx.LogError("Cannot save current data in file '%s'." % pathname)
+                
+    def on_refresh(self,event):
+        self.parent.grid_panel.set_scene_choices()
+        self.parent.grid_panel.set_transition_choices()
         
 class Grid(wx.Panel):
     def __init__(self,parent):
