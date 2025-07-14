@@ -68,6 +68,23 @@ class OBS(object):
             print("Couldn't load transition list:",e)
             return []
 
+    def get_visible_items(self):
+        resp = self.cl.get_current_program_scene()
+        name = resp.scene_name
+        items = self.cl.get_scene_item_list(name).scene_items
+        output = {}
+        for x in items:
+            output[x['sourceName']] = {'id': x['sceneItemId'],
+                                       'enabled': x['sceneItemEnabled']}
+        return output
+    
+    def toggle_item(self, event, k, v, enabled):
+        self.cl.set_current_preview_scene(self.cl.get_current_program_scene().scene_name)
+        self.cl.set_scene_item_enabled(self.cl.get_current_program_scene().scene_name,v,enabled)
+        self.cl.trigger_studio_mode_transition()
+        self.parent.grid_panel.grid.SetFocus()
+        
+
 class GUI(wx.Frame):
     def __init__(self,title,obs_connection,super_endpoint):
         super().__init__(parent=None,title=title)
@@ -78,6 +95,8 @@ class GUI(wx.Frame):
         self.ribbon_panel = Ribbon(self)
         self.grid_panel = Grid(self)
         self.build_menubar()
+        self.CreateStatusBar(1)
+        self.SetStatusText("Ready.")
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.ribbon_panel)
         sizer.Add(self.grid_panel, 1, wx.EXPAND)
@@ -85,6 +104,12 @@ class GUI(wx.Frame):
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
+        
+    def return_focus(self,func):
+        def wrapper():
+            func()
+            self.grid_panel.SetFocus()
+        return wrapper
         
     def on_close(self, event):
         try:
@@ -133,17 +158,6 @@ class Ribbon(wx.Panel):
         self.load_bitmaps()
         self.SetSizer(self.sizer)
         self.Layout()
-        
-    def old_load_bitmaps(self):
-        sys_appearance = wx.SystemSettings.GetAppearance()
-        if sys_appearance.IsDark() and platform.system() != "Windows":
-            filenames = ["./data/icons/dark/add-document.png", "./data/icons/dark/play.png", "./data/icons/dark/refresh.png", "./data/icons/dark/settings-sliders.png", "./data/icons/dark/stop.png"]
-        else:
-            filenames = ["./data/icons/light/add-document.png", "./data/icons/light/play.png", "./data/icons/light/refresh.png", "./data/icons/light/settings-sliders.png", "./data/icons/light/stop.png"]
-        for fname in filenames:
-            bitmap = wx.Bitmap(fname, wx.BITMAP_TYPE_PNG)
-            button = wx.BitmapButton(self, bitmap=bitmap)
-            self.sizer.Add(button, 1, wx.ALL | wx.EXPAND, 5)
             
     def load_bitmaps(self):
         sys_appearance = wx.SystemSettings.GetAppearance()
@@ -169,6 +183,9 @@ class Ribbon(wx.Panel):
         self.button_refresh = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"refresh.png"),wx.BITMAP_TYPE_PNG))
         self.button_refresh.Bind(wx.EVT_BUTTON, self.on_refresh)
         self.sizer.Add(self.button_refresh,1,wx.ALL)
+        self.button_visible = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"eye.png"),wx.BITMAP_TYPE_PNG))
+        self.button_visible.Bind(wx.EVT_BUTTON,self.on_visible)
+        self.sizer.Add(self.button_visible,1,wx.ALL)
         
     def on_play(self,event):
         self.is_playing = not self.is_playing
@@ -209,7 +226,22 @@ class Ribbon(wx.Panel):
     def on_refresh(self,event):
         self.parent.grid_panel.set_scene_choices()
         self.parent.grid_panel.set_transition_choices()
+   
+    def on_visible(self, event):
+        button = event.GetEventObject()
+        screen_pos = button.GetScreenPosition()
+        button_size = button.GetSize()
+
+        # Convert to coordinates relative to this panel (self)
+        client_pos = self.ScreenToClient(screen_pos)
+
+        menu_x = client_pos.x
+        menu_y = client_pos.y + button_size.height  # just below the button
         
+        items = self.parent.obs_conn.get_visible_items()
+        self.PopupMenu(VisiblityPopupMenu(self, items), menu_x, menu_y)
+
+    
 class Grid(wx.Panel):
     def __init__(self,parent):
         super().__init__(parent=parent)
@@ -475,6 +507,22 @@ class SettingsUI(wx.Frame):
             
     def on_cancel(self, event):
         self.Destroy()
+
+class VisiblityPopupMenu(wx.Menu):
+    def __init__(self, parent, items):
+        super().__init__()
+        self.parent = parent
+        self.build_items(items)
+
+    def build_items(self, items):
+        for key, value in items.items():
+            item = self.Append(wx.ID_ANY, key, kind=wx.ITEM_CHECK)
+            item.Check(value['enabled'])
+            self.Bind(
+                wx.EVT_MENU,
+                lambda evt, k=key, v=value['id'], enabled=not value['enabled']: self.parent.parent.obs_conn.toggle_item(evt, k, v, enabled),
+                id=item.GetId()  # ✅ Correctly bind to the item's ID
+            )
         
 def load_obs_settings():
     if os.path.isfile("data/settings/obs_settings.json"):
@@ -495,7 +543,6 @@ def load_super_endpoint():
         return "N/A"
         
 if __name__ == "__main__":
-    #obs_connection = ["10.10.1.29", 4455, "XdwGltOUzfaC8VvB"]
     obs_connection = load_obs_settings()
     super_endpoint = load_super_endpoint()
     app = wx.App()
