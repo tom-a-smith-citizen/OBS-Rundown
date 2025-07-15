@@ -22,13 +22,24 @@ class OBS(object):
         self.password = password
     
     def connect(self,event):
-        print(f"Connecting to {self.host}:{self.port}")
-        self.cl = obs.ReqClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
-        self.cl_events = obs.EventClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
-        self.cl_events.callback.register(self.on_scene_list_changed)
-        self.cl_events.callback.register(self.on_scene_transition_ended)
-        self.parent.grid_panel.set_scene_choices()
-        self.parent.grid_panel.set_transition_choices()
+        try:
+            print(f"Connecting to {self.host}:{self.port}")
+            self.cl = obs.ReqClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
+            self.cl_events = obs.EventClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
+            self.cl_events.callback.register(self.on_scene_list_changed)
+            self.cl_events.callback.register(self.on_scene_transition_ended)
+            self.parent.grid_panel.set_scene_choices()
+            self.parent.grid_panel.set_transition_choices()
+            has_audio_panel = hasattr(self.parent, 'mic_panel')
+            if has_audio_panel:
+                self.parent.mic_panel.build_faders()
+            else:
+                panel = setattr(self.parent, 'mic_panel', AudioPanel(self.parent))
+                self.parent.sizer.Add(self.parent.mic_panel,0,wx.EXPAND)
+            self.parent.SetSizerAndFit(self.parent.sizer)
+            self.parent.Layout()
+        except Exception as e:
+            print("Couldn't connect to OBS:",e)
     
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
@@ -48,6 +59,9 @@ class OBS(object):
             transition = "Cut"
         self.cl.set_current_preview_scene(name)
         self.cl.set_current_scene_transition(transition)
+        has_audio_panel = hasattr(self.parent, 'mic_panel')
+        if has_audio_panel:
+            self.parent.mic_panel.build_faders()
      
     def get_scene_list(self):
         try:
@@ -79,11 +93,48 @@ class OBS(object):
         return output
     
     def toggle_item(self, event, k, v, enabled):
+        preview_scene = self.cl.get_current_preview_scene().scene_name
         self.cl.set_current_preview_scene(self.cl.get_current_program_scene().scene_name)
         self.cl.set_scene_item_enabled(self.cl.get_current_program_scene().scene_name,v,enabled)
         self.cl.trigger_studio_mode_transition()
+        self.cl.set_current_preview_scene(preview_scene)
         self.parent.grid_panel.grid.SetFocus()
         
+    def get_audio_inputs(self):
+        audio_inputs = self.cl.get_input_list('wasapi_input_capture').inputs
+        special_sources = self.cl.get_special_inputs()
+        global_sources = special_sources.__dict__
+        sources_output = {}
+        for key, value in global_sources.items():
+            if key != "attrs" and key[0:2] != "__":
+                sources_output[key] = {'global': True,
+                                       'name': value,
+                                       'UUID': None}
+
+        for x in audio_inputs:
+                sources_output[x['inputUuid']] = {'global': False,
+                                       'name': x['inputName'],
+                                       'UUID': x['inputUuid']}
+        
+        return sources_output
+        
+    def get_audio_levels(self, sources_output: dict):
+        source_and_level = {}
+        for key, value in sources_output.items():
+            if sources_output[key]['name'] is not None:
+                level = self.cl.get_input_volume(sources_output[key]['name']).input_volume_db
+                muted = self.cl.get_input_mute(sources_output[key]['name']).input_muted
+                source_and_level[sources_output[key]['name']] = {'level': level,
+                                                                 'muted': muted}
+                print(f"{sources_output[key]['name']}: {level} dB")
+        return source_and_level
+    
+    def adjust_level(self, event, name, fader):
+        new_level = fader.GetValue()
+        self.cl.set_input_volume(name=name,vol_db=new_level)
+        
+    def toggle_mute(self, name):
+        self.cl.toggle_input_mute(name)
 
 class GUI(wx.Frame):
     def __init__(self,title,obs_connection,super_endpoint):
@@ -97,13 +148,14 @@ class GUI(wx.Frame):
         self.build_menubar()
         self.CreateStatusBar(1)
         self.SetStatusText("Ready.")
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self.ribbon_panel)
-        sizer.Add(self.grid_panel, 1, wx.EXPAND)
-        self.SetSizer(sizer)
+        self.sizer = wx.BoxSizer(wx.VERTICAL)
+        self.sizer.Add(self.ribbon_panel)
+        self.sizer.Add(self.grid_panel, 1, wx.ALL|wx.EXPAND)
+        self.SetSizer(self.sizer)
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
+        wx.CallAfter(self.ribbon_panel.on_play,wx.Event)
         
     def return_focus(self,func):
         def wrapper():
@@ -195,6 +247,7 @@ class Ribbon(wx.Panel):
             self.parent.obs_conn.connect(wx.Event)
         else:
             print("Stopped.")
+            self.parent.obs_conn.cl.disconnect()
             self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
         self.parent.grid_panel.grid.SetFocus()
         
@@ -250,14 +303,16 @@ class Grid(wx.Panel):
         self.Bind(gridlib.EVT_GRID_LABEL_RIGHT_CLICK,self.on_label_right_click)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGED,self.auto_resize_columns)
         self.grid = gridlib.Grid(self)
-        self.grid.CreateGrid(5,4)
+        self.grid.CreateGrid(1,4)
         self.grid.SetColLabelValue(0,"SLUG")
         self.grid.SetColLabelValue(1,"SUPER")
         self.grid.SetColLabelValue(2,"SCENE")
         self.grid.SetColLabelValue(3,"TRANSITION")
         self.set_scene_choices()
         self.set_transition_choices()
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer = wx.FlexGridSizer(1,1,1,1)
+        sizer.AddGrowableCol(0,1)
+        sizer.AddGrowableRow(0,1)
         sizer.Add(self.grid,1,wx.ALL|wx.EXPAND)
         self.SetSizer(sizer)
         self.highlight_row(0, wx.Colour(0, 255, 0))  # Green
@@ -450,6 +505,58 @@ class Grid(wx.Panel):
 
         else:
             event.Skip()
+
+class AudioPanel(wx.Panel):
+    def __init__(self, parent):
+        super().__init__(parent=parent)
+        self.parent = parent
+        self.sizer = wx.FlexGridSizer(1,0,0,0)
+        self.build_faders()
+        self.SetSizerAndFit(self.sizer)
+        self.Layout()
+        
+    def build_faders(self):
+        sys_appearance = wx.SystemSettings.GetAppearance()
+        if sys_appearance.IsDark() and platform.system() != "Windows":
+            self.directory = "./data/icons/dark"
+        else:
+            self.directory = "./data/icons/light"
+        self.sizer.Clear()
+        self.sizer.Layout()
+        inputs_list = self.parent.obs_conn.get_audio_inputs()
+        source_and_level = self.parent.obs_conn.get_audio_levels(inputs_list)
+        for key, value in source_and_level.items():
+            sizer = wx.FlexGridSizer(0,1,1,1)
+            fader = wx.Slider(self, value=int(value['level']), maxValue=0, minValue=-100,style=wx.SL_VERTICAL|wx.SL_MIN_MAX_LABELS|wx.SL_INVERSE|wx.SL_VALUE_LABEL)
+            label = wx.StaticText(self,label=key)
+            sizer.AddMany([(fader,1,wx.ALL|wx.EXPAND|wx.CENTRE),
+                           (label,1,wx.ALL|wx.EXPAND|wx.CENTRE)])
+            fader.Bind(wx.EVT_SCROLL, lambda evt, name=key, fader=fader: self.parent.obs_conn.adjust_level(evt, name, fader))
+            if value['muted']:
+                bitmap = os.path.join(self.directory,'volume-slash.png')
+                name = "muted"
+            else:
+                bitmap = os.path.join(self.directory,'volume.png')
+                name = "unmuted"
+            button = wx.BitmapButton(self,bitmap=wx.Bitmap(bitmap,wx.BITMAP_TYPE_PNG),name=name)
+            button.Bind(wx.EVT_BUTTON, lambda evt, name=key: self.toggle_mute(evt, name))
+            sizer.Add(button,1,wx.CENTRE)
+            self.sizer.Add(sizer,1,wx.ALL|wx.EXPAND)
+        self.Layout()
+            
+    def toggle_mute(self, event, name):
+        self.parent.obs_conn.toggle_mute(name)
+        obj = event.GetEventObject()
+        button_name = obj.GetName()
+        if button_name == "unmuted":
+            obj.SetName("muted")
+            obj.SetBitmap(wx.Bitmap(os.path.join(self.directory,'volume-slash.png'),wx.BITMAP_TYPE_PNG))
+        elif button_name == "muted":
+            obj.SetName("unmuted")
+            obj.SetBitmap(wx.Bitmap(os.path.join(self.directory,'volume.png'),wx.BITMAP_TYPE_PNG))
+        
+            
+
 
 class SettingsUI(wx.Frame):
     def __init__(self,parent):
