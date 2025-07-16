@@ -13,6 +13,11 @@ import os
 import json
 import platform
 import requests
+from enum import IntEnum
+from math import log
+import threading
+import wx.lib.agw.peakmeter as PM
+import numpy as np
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -25,7 +30,7 @@ class OBS(object):
         try:
             print(f"Connecting to {self.host}:{self.port}")
             self.cl = obs.ReqClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
-            self.cl_events = obs.EventClient(host=self.host,port=int(self.port),password=self.password,timeout=3)
+            self.cl_events = obs.EventClient(host=self.host,port=int(self.port),password=self.password,timeout=3,subs=(obs.Subs.LOW_VOLUME | obs.Subs.INPUTVOLUMEMETERS))
             self.cl_events.callback.register(self.on_scene_list_changed)
             self.cl_events.callback.register(self.on_scene_transition_ended)
             self.parent.grid_panel.set_scene_choices()
@@ -36,11 +41,37 @@ class OBS(object):
             else:
                 panel = setattr(self.parent, 'mic_panel', AudioPanel(self.parent))
                 self.parent.sizer.Add(self.parent.mic_panel,0,wx.EXPAND)
+            #threading.Thread(target=self.start_event_listeners,daemon=True).start()
+            self.start_event_listeners()
             self.parent.SetSizerAndFit(self.parent.sizer)
             self.parent.Layout()
         except Exception as e:
             print("Couldn't connect to OBS:",e)
     
+    def start_event_listeners(self):
+            self.cl_events.callback.register(self.on_input_volume_meters)
+            
+    
+    def on_input_mute_state_changed(self, data):
+        pass
+    
+    def on_input_volume_meters(self,data):
+        LEVELTYPE = IntEnum(
+            "LEVELTYPE",
+            "VU POSTFADER PREFADER",
+            start=0,
+        )
+        def fget(x):
+            return round(20 * log(x, 10), 1) if x > 0 else -200.0
+
+        for device in data.inputs:
+            name = device["inputName"]
+            if device["inputLevelsMul"]:
+                left, right = device["inputLevelsMul"]
+                l = fget(left[LEVELTYPE.PREFADER])
+                r = fget(right[LEVELTYPE.PREFADER])
+                self.parent.mic_panel.update_vu(name,l,r)
+        
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
         self.parent.grid_panel.set_scene_choices()
@@ -57,11 +88,12 @@ class OBS(object):
         if transition == "":
             print("Transition not set, using cut.")
             transition = "Cut"
-        self.cl.set_current_preview_scene(name)
-        self.cl.set_current_scene_transition(transition)
-        has_audio_panel = hasattr(self.parent, 'mic_panel')
-        if has_audio_panel:
-            self.parent.mic_panel.build_faders()
+        if name.strip() != "":
+            self.cl.set_current_preview_scene(name)
+            self.cl.set_current_scene_transition(transition)
+            has_audio_panel = hasattr(self.parent, 'mic_panel')
+            if has_audio_panel:
+                self.parent.mic_panel.build_faders()
      
     def get_scene_list(self):
         try:
@@ -157,13 +189,8 @@ class GUI(wx.Frame):
         self.Show()
         wx.CallAfter(self.ribbon_panel.on_play,wx.Event)
         
-    def return_focus(self,func):
-        def wrapper():
-            func()
-            self.grid_panel.SetFocus()
-        return wrapper
-        
     def on_close(self, event):
+        self.obs_conn.cl_events.disconnect()
         try:
             if not os.path.isdir("data/settings"):
                 os.makedirs("data/settings")
@@ -182,6 +209,13 @@ class GUI(wx.Frame):
                 settings = {"endpoint": self.super_endpoint}
                 json.dump(settings,file)
                 print("Json saved.")
+        except Exception as e:
+            print("Couldn't save settings:",e)
+        try:
+            self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_mute_state_changed])
+            self.obs_conn.cl.disconnect()
+        except Exception as e:
+            print("Couldn't deregister event listeners:",e)
         finally:
             self.Destroy()
             
@@ -526,10 +560,15 @@ class AudioPanel(wx.Panel):
         inputs_list = self.parent.obs_conn.get_audio_inputs()
         source_and_level = self.parent.obs_conn.get_audio_levels(inputs_list)
         for key, value in source_and_level.items():
-            sizer = wx.FlexGridSizer(0,1,1,1)
+            sizer = wx.FlexGridSizer(0,2,1,1)
             fader = wx.Slider(self, value=int(value['level']), maxValue=0, minValue=-100,style=wx.SL_VERTICAL|wx.SL_MIN_MAX_LABELS|wx.SL_INVERSE|wx.SL_VALUE_LABEL)
+            peak_meter = setattr(self, f'{key}_vu', PM.PeakMeterCtrl(self, 0, style=wx.SIMPLE_BORDER, agwStyle=PM.PM_VERTICAL))
+            peak_meter = getattr(self, f'{key}_vu')
+            peak_meter.SetMeterBands(2, 20)
+            peak_meter.SetRangeValue(0.1,0.9,1)
             label = wx.StaticText(self,label=key)
             sizer.AddMany([(fader,1,wx.ALL|wx.EXPAND|wx.CENTRE),
+                           (peak_meter,1,wx.ALL|wx.EXPAND|wx.CENTRE),
                            (label,1,wx.ALL|wx.EXPAND|wx.CENTRE)])
             fader.Bind(wx.EVT_SCROLL, lambda evt, name=key, fader=fader: self.parent.obs_conn.adjust_level(evt, name, fader))
             if value['muted']:
@@ -543,7 +582,31 @@ class AudioPanel(wx.Panel):
             sizer.Add(button,1,wx.CENTRE)
             self.sizer.Add(sizer,1,wx.ALL|wx.EXPAND)
         self.Layout()
-            
+    
+    def db_to_normalized(self, db_value, min_db=-200.0):
+        db_value = max(min_db, min(0.0, db_value))
+        return (db_value - min_db) / (0.0 - min_db)
+    
+    def normalize_to_range(self, data, target_min, target_max):
+        """Normalizes a NumPy array to a specified target range."""
+        min_val = np.min(data)
+        max_val = np.max(data)
+        normalized_data = target_min + (data - min_val) * (target_max - target_min) / (max_val - min_val)
+        return normalized_data
+    
+    def update_vu(self, name, l, r):
+        #l = self.db_to_normalized(l)
+        #r = self.db_to_normalized(r)
+        db_values = np.array([l,r])
+        amplitudes = 10**(db_values / 20)
+        normalized_amplitudes = self.normalize_to_range(amplitudes, 0, 1)
+        #data = [l,r]
+        #print(data)
+        peak_meter = getattr(self, f"{name}_vu")
+        peak_meter.SetData(arrayValue=normalized_amplitudes,offset=0,size=len(normalized_amplitudes))
+        peak_meter.Refresh()
+        peak_meter.Update()
+        
     def toggle_mute(self, event, name):
         self.parent.obs_conn.toggle_mute(name)
         obj = event.GetEventObject()
@@ -555,8 +618,6 @@ class AudioPanel(wx.Panel):
             obj.SetName("unmuted")
             obj.SetBitmap(wx.Bitmap(os.path.join(self.directory,'volume.png'),wx.BITMAP_TYPE_PNG))
         
-            
-
 
 class SettingsUI(wx.Frame):
     def __init__(self,parent):
