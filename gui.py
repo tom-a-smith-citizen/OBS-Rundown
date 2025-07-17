@@ -187,10 +187,13 @@ class GUI(wx.Frame):
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
-        wx.CallAfter(self.ribbon_panel.on_play,wx.Event)
+        #wx.CallAfter(self.ribbon_panel.on_play,wx.Event)
         
     def on_close(self, event):
-        self.obs_conn.cl_events.disconnect()
+        try:
+            self.obs_conn.cl_events.disconnect()
+        except Exception as e:
+            print("Couldn't disconnect from OBS:",e)
         try:
             if not os.path.isdir("data/settings"):
                 os.makedirs("data/settings")
@@ -565,7 +568,7 @@ class AudioPanel(wx.Panel):
             peak_meter = setattr(self, f'{key}_vu', PM.PeakMeterCtrl(self, 0, style=wx.SIMPLE_BORDER, agwStyle=PM.PM_VERTICAL))
             peak_meter = getattr(self, f'{key}_vu')
             peak_meter.SetMeterBands(2, 20)
-            peak_meter.SetRangeValue(0.1,0.9,1)
+            peak_meter.SetRangeValue(66.67,83.3,100)
             label = wx.StaticText(self,label=key)
             sizer.AddMany([(fader,1,wx.ALL|wx.EXPAND|wx.CENTRE),
                            (peak_meter,1,wx.ALL|wx.EXPAND|wx.CENTRE),
@@ -594,16 +597,37 @@ class AudioPanel(wx.Panel):
         normalized_data = target_min + (data - min_val) * (target_max - target_min) / (max_val - min_val)
         return normalized_data
     
+    def normalize(self, data):
+        if data < 0:
+            data = data * data
+        else:
+            data += 100
+        return data
+    
+    def convert_obs_db_to_peakmeter(self, obs_db_level, peakmeter_max=100):
+        # Clamp the input dB level to the valid OBS range
+        obs_db_level = max(-200, min(0, obs_db_level))
+
+        # Define the OBS dB range and map it to a positive linear range
+        # We'll consider -60dB as a reasonable 'silence' threshold for the meter's visual range
+        # Values below -60dB will map to 0 on the peak meter
+        if obs_db_level <= -60:
+            return 0.0
+        else:
+            # Scale the active range (-60 dB to 0 dB) to 0 to peakmeter_max
+            # (obs_db_level - (-60)) / (0 - (-60)) * peakmeter_max
+            converted_level = ((obs_db_level + 60) / 60) * peakmeter_max
+            return converted_level
+    
     def update_vu(self, name, l, r):
         #l = self.db_to_normalized(l)
         #r = self.db_to_normalized(r)
-        db_values = np.array([l,r])
-        amplitudes = 10**(db_values / 20)
-        normalized_amplitudes = self.normalize_to_range(amplitudes, 0, 1)
-        #data = [l,r]
-        #print(data)
+        l = self.convert_obs_db_to_peakmeter(l)
+        r = self.convert_obs_db_to_peakmeter(r)
+        data = [l,r]
+        print(data)
         peak_meter = getattr(self, f"{name}_vu")
-        peak_meter.SetData(arrayValue=normalized_amplitudes,offset=0,size=len(normalized_amplitudes))
+        peak_meter.SetData(arrayValue=data,offset=0,size=len(data))
         peak_meter.Refresh()
         peak_meter.Update()
         
