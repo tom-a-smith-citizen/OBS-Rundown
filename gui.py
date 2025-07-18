@@ -225,6 +225,8 @@ class GUI(wx.Frame):
         try:
             self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_volume_changed])
             self.obs_conn.cl.disconnect()
+            self.sizer.Destroy(2)
+            self.Layout()
         except Exception as e:
             print("Couldn't deregister event listeners:",e)
         finally:
@@ -310,7 +312,14 @@ class Ribbon(wx.Panel):
             self.parent.obs_conn.connect(wx.Event)
         else:
             print("Stopped.")
-            self.parent.obs_conn.cl.disconnect()
+            try:
+                self.parent.obs_conn.cl.disconnect()
+            except Exception as e:
+                print("Couldn't disconnect from OBS:",e)
+            try:
+                self.parent.obs_conn.cl_events.callback.deregister([self.parent.obs_conn.on_input_volume_meters,self.parent.obs_conn.on_input_volume_changed])
+            except Exception as e:
+                print("Couldn't deregister event listeners:",e)
             self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
         self.parent.grid_panel.grid.SetFocus()
         
@@ -512,36 +521,44 @@ class Grid(wx.Panel):
             self.add_row()
             return
         if code == wx.WXK_SPACE:
-            red_row = None
-            green_row = None
-            for row in range(self.grid.GetNumberRows()):
-                color = self.grid.GetCellBackgroundColour(row, 0)
-                if color == wx.Colour(0, 255, 0):  # Green
-                    green_row = row
-                elif color == wx.Colour(255, 0, 0):  # Red
-                    red_row = row
-            name = self.grid.GetCellValue(green_row,2)
-            super_text = self.grid.GetCellValue(green_row,1)
-            if name != "":
-                self.parent.obs_conn.cl.set_current_preview_scene(name)
-            self.clear_all_highlights()
-            if green_row is not None:
-                self.highlight_row(green_row, wx.Colour(255, 0, 0))
-                next_row = green_row + 1
-                if next_row >= self.grid.GetNumberRows():
-                    next_row = 0
-            if next_row < self.grid.GetNumberRows():
-                self.highlight_row(next_row, wx.Colour(0, 255, 0))
-            elif red_row is None:
-                self.highlight_row(0, wx.Colour(0, 255, 0))
-            self.grid.ForceRefresh()
-            self.parent.obs_conn.cl.trigger_studio_mode_transition()
-            if super_text.strip() != "":
-                print(super_text)
-                self.send_super_text(super_text)
+            try:
+                self.advance_rundown()
+            except AttributeError:
+                print("Couldn't advance the rundown because the OBS instance does not exist.")
+            except Exception as e:
+                print("Unhandled exception advancing rundown:",e)
 
         else:
             event.Skip()
+            
+    def advance_rundown(self):
+        red_row = None
+        green_row = None
+        for row in range(self.grid.GetNumberRows()):
+            color = self.grid.GetCellBackgroundColour(row, 0)
+            if color == wx.Colour(0, 255, 0):  # Green
+                green_row = row
+            elif color == wx.Colour(255, 0, 0):  # Red
+                red_row = row
+        name = self.grid.GetCellValue(green_row,2)
+        super_text = self.grid.GetCellValue(green_row,1)
+        if name != "":
+            self.parent.obs_conn.cl.set_current_preview_scene(name)
+        self.clear_all_highlights()
+        if green_row is not None:
+            self.highlight_row(green_row, wx.Colour(255, 0, 0))
+            next_row = green_row + 1
+            if next_row >= self.grid.GetNumberRows():
+                next_row = 0
+        if next_row < self.grid.GetNumberRows():
+            self.highlight_row(next_row, wx.Colour(0, 255, 0))
+        elif red_row is None:
+            self.highlight_row(0, wx.Colour(0, 255, 0))
+        self.grid.ForceRefresh()
+        self.parent.obs_conn.cl.trigger_studio_mode_transition()
+        if super_text.strip() != "":
+            print(super_text)
+            self.send_super_text(super_text)
 
 class AudioPanel(wx.Panel):
     def __init__(self, parent):
@@ -711,7 +728,7 @@ class AboutFrame(wx.Frame):
         self.label_program_name = wx.StaticText(self.panel_main, label="NROBS")
         self.label_program_name.SetFont(self.font)
         self.label_byline = wx.StaticText(self.panel_main, label="by Tom Smith")
-        self.label_email = wx.StaticText(self.panel_main, label="tom@tomsmith.media")
+        self.label_email = hl.HyperLinkCtrl(self.panel_main, label="tom@tomsmith.media",URL="mailto:tom@tomsmith.media")
         self.hl_icon_attribution = hl.HyperLinkCtrl(self.panel_main,label="Uicons by Flaticon",URL="https://www.flaticon.com/uicons")
         self.sizer_main.AddMany([(self.bitmap_logo,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
                                  (self.label_program_name,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
