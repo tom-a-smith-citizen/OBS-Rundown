@@ -8,6 +8,8 @@ Created on Tue Jul  8 10:18:43 2025
 
 import wx
 import wx.grid as gridlib
+import wx.lib.agw.hyperlink as hl
+import wx.lib.agw.peakmeter as PM
 import obsws_python as obs
 import os
 import json
@@ -15,7 +17,7 @@ import platform
 import requests
 from enum import IntEnum
 from math import log
-import wx.lib.agw.peakmeter as PM
+
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -37,7 +39,7 @@ class OBS(object):
             if has_audio_panel:
                 self.parent.mic_panel.build_faders()
             else:
-                panel = setattr(self.parent, 'mic_panel', AudioPanel(self.parent))
+                setattr(self.parent, 'mic_panel', AudioPanel(self.parent))
                 self.parent.sizer.Add(self.parent.mic_panel,0,wx.EXPAND)
             self.start_event_listeners()
             self.parent.SetSizerAndFit(self.parent.sizer)
@@ -47,10 +49,7 @@ class OBS(object):
     
     def start_event_listeners(self):
             self.cl_events.callback.register(self.on_input_volume_meters)
-            
-    
-    def on_input_mute_state_changed(self, data):
-        pass
+            self.cl_events.callback.register(self.on_input_volume_changed)
     
     def on_input_volume_meters(self,data):
         try:
@@ -71,7 +70,16 @@ class OBS(object):
                     wx.CallAfter(self.parent.mic_panel.update_vu,name,l,r)
         except Exception as e:
             print("Problem handling VU meters:", e)
-        
+    
+    def on_input_volume_changed(self,data):
+        try:
+            name = data.input_name
+            dB = int(data.input_volume_db)
+            fader = getattr(self.parent.mic_panel,f"{name}_fader")
+            wx.CallAfter(fader.SetValue,dB)
+        except Exception as e:
+            print("Error dynamically adjusting fader:",e)
+    
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
         wx.CallAFter(self.parent.grid_panel.set_scene_choices)
@@ -215,7 +223,7 @@ class GUI(wx.Frame):
         except Exception as e:
             print("Couldn't save settings:",e)
         try:
-            self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_mute_state_changed])
+            self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_volume_changed])
             self.obs_conn.cl.disconnect()
         except Exception as e:
             print("Couldn't deregister event listeners:",e)
@@ -319,6 +327,7 @@ class Ribbon(wx.Panel):
                 self.parent.grid_panel.load_rundown(pathname)
             except IOError:
                 wx.LogError(f"Cannot open file '{pathname}'.")
+        self.parent.grid_panel.grid.SetFocus()
 
     def on_save(self,event):
         with wx.FileDialog(self, "Save rundown", wildcard="JSON files (*.json)|*.json", defaultDir="./saved_rundowns",style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
@@ -329,10 +338,12 @@ class Ribbon(wx.Panel):
                 self.parent.grid_panel.save_rundown(wx.Event, pathname)
             except IOError:
                 wx.LogError("Cannot save current data in file '%s'." % pathname)
-                
+        self.parent.grid_panel.grid.SetFocus()
+        
     def on_refresh(self,event):
         self.parent.grid_panel.set_scene_choices()
         self.parent.grid_panel.set_transition_choices()
+        self.parent.grid_panel.grid.SetFocus()
    
     def on_visible(self, event):
         button = event.GetEventObject()
@@ -553,7 +564,8 @@ class AudioPanel(wx.Panel):
         source_and_level = self.parent.obs_conn.get_audio_levels(inputs_list)
         for key, value in source_and_level.items():
             sizer = wx.FlexGridSizer(0,2,1,1)
-            fader = wx.Slider(self, value=int(value['level']), maxValue=0, minValue=-100,style=wx.SL_VERTICAL|wx.SL_MIN_MAX_LABELS|wx.SL_INVERSE|wx.SL_VALUE_LABEL)
+            fader = setattr(self, f'{key}_fader', wx.Slider(self, value=int(value['level']), maxValue=0, minValue=-100,style=wx.SL_VERTICAL|wx.SL_MIN_MAX_LABELS|wx.SL_INVERSE|wx.SL_VALUE_LABEL))
+            fader = getattr(self,f'{key}_fader')
             peak_meter = setattr(self, f'{key}_vu', PM.PeakMeterCtrl(self, 0, style=wx.SIMPLE_BORDER, agwStyle=PM.PM_VERTICAL))
             peak_meter = getattr(self, f'{key}_vu')
             peak_meter.SetMeterBands(2, 20)
@@ -700,13 +712,12 @@ class AboutFrame(wx.Frame):
         self.label_program_name.SetFont(self.font)
         self.label_byline = wx.StaticText(self.panel_main, label="by Tom Smith")
         self.label_email = wx.StaticText(self.panel_main, label="tom@tomsmith.media")
-        self.label_phone_cell = wx.StaticText(self.panel_main, label="Cell: (231) 343.9803")
-        
+        self.hl_icon_attribution = hl.HyperLinkCtrl(self.panel_main,label="Uicons by Flaticon",URL="https://www.flaticon.com/uicons")
         self.sizer_main.AddMany([(self.bitmap_logo,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
                                  (self.label_program_name,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
                                  (self.label_byline,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
                                  (self.label_email,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
-                                 (self.label_phone_cell,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER)])
+                                 (self.hl_icon_attribution,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER)])
         
         self.panel_main.SetSizerAndFit(self.sizer_main)
         self.SetInitialSize(self.GetBestSize())
