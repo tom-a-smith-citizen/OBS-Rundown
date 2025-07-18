@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-OBS-Rundown GUI
+NROBS
 Created on Tue Jul  8 10:18:43 2025
 
 @author: TOSmith
@@ -15,9 +15,7 @@ import platform
 import requests
 from enum import IntEnum
 from math import log
-import threading
 import wx.lib.agw.peakmeter as PM
-import numpy as np
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -41,7 +39,6 @@ class OBS(object):
             else:
                 panel = setattr(self.parent, 'mic_panel', AudioPanel(self.parent))
                 self.parent.sizer.Add(self.parent.mic_panel,0,wx.EXPAND)
-            #threading.Thread(target=self.start_event_listeners,daemon=True).start()
             self.start_event_listeners()
             self.parent.SetSizerAndFit(self.parent.sizer)
             self.parent.Layout()
@@ -56,25 +53,28 @@ class OBS(object):
         pass
     
     def on_input_volume_meters(self,data):
-        LEVELTYPE = IntEnum(
-            "LEVELTYPE",
-            "VU POSTFADER PREFADER",
-            start=0,
-        )
-        def fget(x):
-            return round(20 * log(x, 10), 1) if x > 0 else -200.0
+        try:
+            LEVELTYPE = IntEnum(
+                "LEVELTYPE",
+                "VU POSTFADER PREFADER",
+                start=0,
+                )
+            def fget(x):
+                return round(20 * log(x, 10), 1) if x > 0 else -200.0
 
-        for device in data.inputs:
-            name = device["inputName"]
-            if device["inputLevelsMul"]:
-                left, right = device["inputLevelsMul"]
-                l = fget(left[LEVELTYPE.PREFADER])
-                r = fget(right[LEVELTYPE.PREFADER])
-                self.parent.mic_panel.update_vu(name,l,r)
+            for device in data.inputs:
+                name = device["inputName"]
+                if device["inputLevelsMul"]:
+                    left, right = device["inputLevelsMul"]
+                    l = fget(left[LEVELTYPE.POSTFADER])
+                    r = fget(right[LEVELTYPE.POSTFADER])
+                    wx.CallAfter(self.parent.mic_panel.update_vu,name,l,r)
+        except Exception as e:
+            print("Problem handling VU meters:", e)
         
     def on_scene_list_changed(self, event):
         print("Scene list changed.")
-        self.parent.grid_panel.set_scene_choices()
+        wx.CallAFter(self.parent.grid_panel.set_scene_choices)
         
     def on_scene_transition_ended(self, event):
         print("Transition finished.")
@@ -89,11 +89,11 @@ class OBS(object):
             print("Transition not set, using cut.")
             transition = "Cut"
         if name.strip() != "":
-            self.cl.set_current_preview_scene(name)
-            self.cl.set_current_scene_transition(transition)
+            wx.CallAfter(self.cl.set_current_preview_scene,name)
+            wx.CallAfter(self.cl.set_current_scene_transition,transition)
             has_audio_panel = hasattr(self.parent, 'mic_panel')
             if has_audio_panel:
-                self.parent.mic_panel.build_faders()
+                wx.CallAfter(self.parent.mic_panel.build_faders)
      
     def get_scene_list(self):
         try:
@@ -172,6 +172,7 @@ class GUI(wx.Frame):
     def __init__(self,title,obs_connection,super_endpoint):
         super().__init__(parent=None,title=title)
         self.Bind(wx.EVT_CLOSE,self.on_close)
+        self.SetIcon(wx.Icon("./data/icons/app.png",wx.BITMAP_TYPE_PNG))
         self.super_endpoint = super_endpoint
         self.obs_connection = obs_connection
         self.obs_conn = OBS(self,obs_connection[0],obs_connection[1],obs_connection[2])
@@ -181,13 +182,12 @@ class GUI(wx.Frame):
         self.CreateStatusBar(1)
         self.SetStatusText("Ready.")
         self.sizer = wx.BoxSizer(wx.VERTICAL)
-        self.sizer.Add(self.ribbon_panel)
+        self.sizer.Add(self.ribbon_panel,0,wx.ALL|wx.EXPAND)
         self.sizer.Add(self.grid_panel, 1, wx.ALL|wx.EXPAND)
         self.SetSizer(self.sizer)
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
-        #wx.CallAfter(self.ribbon_panel.on_play,wx.Event)
         
     def on_close(self, event):
         try:
@@ -226,17 +226,35 @@ class GUI(wx.Frame):
         menubar = wx.MenuBar()
         
         file = wx.Menu()
-        new = file.Append(wx.ID_ANY,"New","New Rundown")
+        new = file.Append(wx.ID_ANY,"New","New rundown.")
         self.Bind(wx.EVT_MENU, self.on_new, new)
-        
-        
+        _open = file.Append(wx.ID_ANY,"Open","Open a rundown.")
+        self.Bind(wx.EVT_MENU, self.ribbon_panel.on_open,_open)
+        save = file.Append(wx.ID_ANY,"Save As","Save a rundown.")
+        self.Bind(wx.EVT_MENU, self.ribbon_panel.on_save,save)
+        settings = file.Append(wx.ID_ANY,"Settings","Change settings.")
+        self.Bind(wx.EVT_MENU,self.ribbon_panel.on_settings,settings)
+        _exit = file.Append(wx.ID_ANY,"Quit","Quit this program.")
+        self.Bind(wx.EVT_MENU, self.on_close, _exit)
         menubar.Append(file,"File")
+        
+        _help = wx.Menu()
+        about = _help.Append(wx.ID_ANY,"About","About this program.")
+        self.Bind(wx.EVT_MENU,self.on_about,about)
+        documentation = _help.Append(wx.ID_ANY,"Documentation","Open a PDF with this program's documentation.")
+        self.Bind(wx.EVT_MENU,self.on_documentation,documentation)
+        menubar.Append(_help,"Help")
         
         self.SetMenuBar(menubar)
         
     def on_new(self, event):
         GUI("OBS Rundown",(self.obs_connection[0],self.obs_connection[1],self.obs_connection[2]),self.super_endpoint)
         
+    def on_about(self, event):
+        AboutFrame(self)
+
+    def on_documentation(self,event):
+        pass
 
 class Ribbon(wx.Panel):
     def __init__(self, parent):
@@ -305,8 +323,7 @@ class Ribbon(wx.Panel):
     def on_save(self,event):
         with wx.FileDialog(self, "Save rundown", wildcard="JSON files (*.json)|*.json", defaultDir="./saved_rundowns",style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
-                return     # the user changed their mind
-            # save the current contents in the file
+                return
             pathname = fileDialog.GetPath()
             try:
                 self.parent.grid_panel.save_rundown(wx.Event, pathname)
@@ -321,13 +338,9 @@ class Ribbon(wx.Panel):
         button = event.GetEventObject()
         screen_pos = button.GetScreenPosition()
         button_size = button.GetSize()
-
-        # Convert to coordinates relative to this panel (self)
         client_pos = self.ScreenToClient(screen_pos)
-
         menu_x = client_pos.x
-        menu_y = client_pos.y + button_size.height  # just below the button
-        
+        menu_y = client_pos.y + button_size.height
         items = self.parent.obs_conn.get_visible_items()
         self.PopupMenu(VisiblityPopupMenu(self, items), menu_x, menu_y)
 
@@ -423,14 +436,10 @@ class Grid(wx.Panel):
     def add_row(self):
         row = self.grid.GetNumberRows()
         self.grid.AppendRows(1)
-        
-        # Optionally, copy column labels or default cell values
         self.grid.SetCellValue(row, 0, "")  # SLUG
         self.grid.SetCellValue(row, 1, "")  # SUPER
         self.grid.SetCellValue(row, 2, "")  # SCENE
         self.grid.SetCellValue(row, 3, "")  # TRANSITION
-        
-        # Re-apply editors for the new row
         self.set_scene_choices()
         self.set_transition_choices()
         
@@ -473,12 +482,9 @@ class Grid(wx.Panel):
             self.parent.obs_conn.cl.set_current_preview_scene(name)
         except Exception as e:
             print(e)
-        # Optional: Clear existing highlights
         for r in range(self.grid.GetNumberRows()):
             for c in range(self.grid.GetNumberCols()):
                 self.grid.SetCellBackgroundColour(r, c, wx.WHITE)
-
-        # Highlight the selected row in yellow
         for col in range(self.grid.GetNumberCols()):
             self.grid.SetCellBackgroundColour(row, col, wx.GREEN)
 
@@ -492,49 +498,32 @@ class Grid(wx.Panel):
     def on_key_down(self, event):
         code = event.GetKeyCode()
         if event.ControlDown() and code == ord('I'):
-            print("Ctrl+I pressed! Adding a row...")
             self.add_row()
             return
         if code == wx.WXK_SPACE:
-            print("Spacebar was pressed!")
-
             red_row = None
             green_row = None
-
-            # Step 1: Identify currently green and red rows
             for row in range(self.grid.GetNumberRows()):
                 color = self.grid.GetCellBackgroundColour(row, 0)
                 if color == wx.Colour(0, 255, 0):  # Green
                     green_row = row
                 elif color == wx.Colour(255, 0, 0):  # Red
                     red_row = row
-
-            #Step 1.5 Set Preview
             name = self.grid.GetCellValue(green_row,2)
             super_text = self.grid.GetCellValue(green_row,1)
             if name != "":
                 self.parent.obs_conn.cl.set_current_preview_scene(name)
-
-            # Step 2: Clear all highlights
             self.clear_all_highlights()
-
-            # Step 3: Promote green → red, next → green
             if green_row is not None:
-                self.highlight_row(green_row, wx.Colour(255, 0, 0))  # Red
-
+                self.highlight_row(green_row, wx.Colour(255, 0, 0))
                 next_row = green_row + 1
                 if next_row >= self.grid.GetNumberRows():
                     next_row = 0
             if next_row < self.grid.GetNumberRows():
-                self.highlight_row(next_row, wx.Colour(0, 255, 0))  # Green
-
-            # If there was no green row yet (first press), start at top
+                self.highlight_row(next_row, wx.Colour(0, 255, 0))
             elif red_row is None:
-                self.highlight_row(0, wx.Colour(0, 255, 0))  # First green row
-
+                self.highlight_row(0, wx.Colour(0, 255, 0))
             self.grid.ForceRefresh()
-
-            # Trigger OBS transition
             self.parent.obs_conn.cl.trigger_studio_mode_transition()
             if super_text.strip() != "":
                 print(super_text)
@@ -586,52 +575,30 @@ class AudioPanel(wx.Panel):
             self.sizer.Add(sizer,1,wx.ALL|wx.EXPAND)
         self.Layout()
     
-    def db_to_normalized(self, db_value, min_db=-200.0):
-        db_value = max(min_db, min(0.0, db_value))
-        return (db_value - min_db) / (0.0 - min_db)
-    
-    def normalize_to_range(self, data, target_min, target_max):
-        """Normalizes a NumPy array to a specified target range."""
-        min_val = np.min(data)
-        max_val = np.max(data)
-        normalized_data = target_min + (data - min_val) * (target_max - target_min) / (max_val - min_val)
-        return normalized_data
-    
-    def normalize(self, data):
-        if data < 0:
-            data = data * data
-        else:
-            data += 100
-        return data
-    
     def convert_obs_db_to_peakmeter(self, obs_db_level, peakmeter_max=100):
-        # Clamp the input dB level to the valid OBS range
         obs_db_level = max(-200, min(0, obs_db_level))
-
-        # Define the OBS dB range and map it to a positive linear range
-        # We'll consider -60dB as a reasonable 'silence' threshold for the meter's visual range
-        # Values below -60dB will map to 0 on the peak meter
         if obs_db_level <= -60:
             return 0.0
         else:
-            # Scale the active range (-60 dB to 0 dB) to 0 to peakmeter_max
-            # (obs_db_level - (-60)) / (0 - (-60)) * peakmeter_max
             converted_level = ((obs_db_level + 60) / 60) * peakmeter_max
             return converted_level
     
     def update_vu(self, name, l, r):
-        #l = self.db_to_normalized(l)
-        #r = self.db_to_normalized(r)
-        l = self.convert_obs_db_to_peakmeter(l)
-        r = self.convert_obs_db_to_peakmeter(r)
-        data = [l,r]
-        print(data)
-        peak_meter = getattr(self, f"{name}_vu")
-        peak_meter.SetData(arrayValue=data,offset=0,size=len(data))
-        peak_meter.Refresh()
-        peak_meter.Update()
+        try:
+            data = [self.convert_obs_db_to_peakmeter(l),self.convert_obs_db_to_peakmeter(r)]
+            peak_meter = getattr(self, f"{name}_vu")
+            peak_meter.SetData(arrayValue=data, offset=0, size=len(data))
+        except AttributeError:
+            print(f"No peak meter exists for {name}")
+        except Exception as e:
+            print(f"Error updating VU for {name}: {e}")
         
     def toggle_mute(self, event, name):
+        sys_appearance = wx.SystemSettings.GetAppearance()
+        if sys_appearance.IsDark() and platform.system() != "Windows":
+            self.directory = "./data/icons/dark"
+        else:
+            self.directory = "./data/icons/light"
         self.parent.obs_conn.toggle_mute(name)
         obj = event.GetEventObject()
         button_name = obj.GetName()
@@ -647,6 +614,7 @@ class SettingsUI(wx.Frame):
     def __init__(self,parent):
         super().__init__(parent=parent, title="Settings")
         self.parent = parent
+        self.SetIcon(wx.Icon('./data/icons/app.png',wx.BITMAP_TYPE_PNG))
         self.panel_main = wx.Panel(self)
         self.sizer_main = wx.FlexGridSizer(5,2,10,10)
         self.sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
@@ -713,8 +681,37 @@ class VisiblityPopupMenu(wx.Menu):
             self.Bind(
                 wx.EVT_MENU,
                 lambda evt, k=key, v=value['id'], enabled=not value['enabled']: self.parent.parent.obs_conn.toggle_item(evt, k, v, enabled),
-                id=item.GetId()  # ✅ Correctly bind to the item's ID
+                id=item.GetId()
             )
+
+class AboutFrame(wx.Frame):
+    def __init__(self, parent):
+        super().__init__(parent=parent)
+        self.parent = parent
+        self.SetTitle('NROBS - About')
+        self.SetIcon(wx.Icon('./data/icons/app.png',wx.BITMAP_TYPE_PNG))
+        self.panel_main = wx.Panel(self)
+        self.sizer_main = wx.FlexGridSizer(6,1,10,10)
+        self.font = wx.Font(12, wx.FONTFAMILY_MODERN, 0, 90, underline = False, faceName ="Arial Bold")
+        self.logo = wx.Image('./data/icons/app.png', wx.BITMAP_TYPE_PNG)
+        self.logo.Rescale(300,300)
+        self.bitmap_logo = wx.StaticBitmap(self.panel_main,bitmap=self.logo.ConvertToBitmap())
+        self.label_program_name = wx.StaticText(self.panel_main, label="NROBS")
+        self.label_program_name.SetFont(self.font)
+        self.label_byline = wx.StaticText(self.panel_main, label="by Tom Smith")
+        self.label_email = wx.StaticText(self.panel_main, label="tom@tomsmith.media")
+        self.label_phone_cell = wx.StaticText(self.panel_main, label="Cell: (231) 343.9803")
+        
+        self.sizer_main.AddMany([(self.bitmap_logo,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
+                                 (self.label_program_name,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
+                                 (self.label_byline,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
+                                 (self.label_email,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER),
+                                 (self.label_phone_cell,1,wx.ALL|wx.CENTER|wx.ALIGN_CENTER)])
+        
+        self.panel_main.SetSizerAndFit(self.sizer_main)
+        self.SetInitialSize(self.GetBestSize())
+        self.Layout()
+        self.Show()
         
 def load_obs_settings():
     if os.path.isfile("data/settings/obs_settings.json"):
@@ -738,5 +735,5 @@ if __name__ == "__main__":
     obs_connection = load_obs_settings()
     super_endpoint = load_super_endpoint()
     app = wx.App()
-    frame = GUI("OBS Rundown",obs_connection,super_endpoint)
+    frame = GUI("NROBS",obs_connection,super_endpoint)
     app.MainLoop()

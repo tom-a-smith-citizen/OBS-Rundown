@@ -4,7 +4,7 @@ save_data_on_exit = True
 save_history = True
 save_non_project_files = False
 project_type = 'empty-project-type'
-recent_files = ['gui.py', 'data\\settings\\obs_settings.json', 'tests\\audio_data.py', 'tests\\vu_meters.py']
+recent_files = ['gui.py']
 
 [main]
 version = 0.2.0
