@@ -187,12 +187,11 @@ class GUI(wx.Frame):
         self.ribbon_panel = Ribbon(self)
         self.grid_panel = Grid(self)
         self.build_menubar()
-        self.CreateStatusBar(1)
-        self.SetStatusText("Ready.")
         self.sizer = wx.BoxSizer(wx.VERTICAL)
         self.sizer.Add(self.ribbon_panel,0,wx.ALL|wx.EXPAND)
-        self.sizer.Add(self.grid_panel, 1, wx.ALL|wx.EXPAND)
-        self.SetSizer(self.sizer)
+        self.sizer.Add(self.grid_panel, 1, wx.ALL|wx.EXPAND|wx.CENTRE)
+        self.SetSizerAndFit(self.sizer)
+        self.SetInitialSize(self.GetBestSize())
         self.Bind(wx.EVT_SIZE,self.grid_panel.auto_resize_columns)
         self.Layout()
         self.Show()
@@ -369,13 +368,15 @@ class Grid(wx.Panel):
         super().__init__(parent=parent)
         self.parent = parent
         self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
-        self.Bind(gridlib.EVT_GRID_LABEL_RIGHT_CLICK,self.on_label_right_click)
+        self.Bind(gridlib.EVT_GRID_LABEL_LEFT_DCLICK,self.on_double_click)
+        self.Bind(gridlib.EVT_GRID_LABEL_RIGHT_CLICK,self.on_right_click)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGED,self.auto_resize_columns)
         self.init_gui()
         
-    
     def init_gui(self):
         self.grid = gridlib.Grid(self)
+        self.grid.SetInitialSize((500,100))
+        self.grid.EnableDragRowMove(enable=True)
         self.grid.CreateGrid(1,4)
         self.grid.SetColLabelValue(0,"SLUG")
         self.grid.SetColLabelValue(1,"SUPER")
@@ -426,7 +427,6 @@ class Grid(wx.Panel):
                 self.grid.SetCellValue(row, 1, data.get('super', ''))
                 self.grid.SetCellValue(row, 2, data.get('scene', ''))
                 self.grid.SetCellValue(row, 3, data.get('transition', ''))
-
             self.set_scene_choices()
             self.set_transition_choices()
             self.grid.ForceRefresh()
@@ -465,7 +465,6 @@ class Grid(wx.Panel):
         self.grid.SetCellValue(row, 3, "")  # TRANSITION
         self.set_scene_choices()
         self.set_transition_choices()
-        
         self.grid.ForceRefresh()
      
     def set_scene_choices(self):
@@ -498,7 +497,7 @@ class Grid(wx.Panel):
                     self.grid.SetCellValue(row, 3, current_selections[row])
             self.grid.ForceRefresh()
      
-    def on_label_right_click(self, event):
+    def on_double_click(self, event):
         row = event.GetRow()
         try:
             name = self.grid.GetCellValue(row,2)
@@ -512,6 +511,12 @@ class Grid(wx.Panel):
             self.grid.SetCellBackgroundColour(row, col, wx.GREEN)
 
         self.grid.ForceRefresh()
+        self.grid.ClearSelection()
+    
+    def on_right_click(self,event):
+        row = event.GetRow()
+        x,y = event.GetPosition()
+        self.PopupMenu(RowPopupMenu(self, row), x, y)
     
     def send_super_text(self,text):
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
@@ -530,10 +535,9 @@ class Grid(wx.Panel):
                 print("Couldn't advance the rundown because the OBS instance does not exist.")
             except Exception as e:
                 print("Unhandled exception advancing rundown:",e)
-
         else:
             event.Skip()
-            
+        
     def advance_rundown(self):
         red_row = None
         green_row = None
@@ -719,6 +723,35 @@ class VisiblityPopupMenu(wx.Menu):
                 lambda evt, k=key, v=value['id'], enabled=not value['enabled']: self.parent.parent.obs_conn.toggle_item(evt, k, v, enabled),
                 id=item.GetId()
             )
+
+class RowPopupMenu(wx.Menu):
+    def __init__(self, parent, row):
+        super().__init__()
+        self.parent = parent
+        self.row = row
+        self.init_ui()
+        
+    def init_ui(self):
+        add_before = self.Append(wx.ID_ANY, "Add Row Before")
+        self.Bind(wx.EVT_MENU, self.on_add_before, add_before)
+        add_after = self.Append(wx.ID_ANY, "Add Row After")
+        self.Bind(wx.EVT_MENU, self.on_add_after, add_after)
+        remove = self.Append(wx.ID_ANY, "Remove")
+        self.Bind(wx.EVT_MENU, self.on_remove, remove)
+        
+    def on_add_before(self, event):
+        pos = self.row - 1
+        self.parent.grid.InsertRows(pos=pos,numRows=1,updateLabels=True)
+        wx.CallAfter(self.parent.grid.ForceRefresh)
+    
+    def on_add_after(self, event):
+        pos = self.row + 1
+        self.parent.grid.InsertRows(pos=pos,numRows=1,updateLabels=True)
+        wx.CallAfter(self.parent.grid.ForceRefresh)
+    
+    def on_remove(self, event):
+        self.parent.grid.DeleteRows(pos=self.row,numRows=1,updateLabels=True)
+        wx.CallAfter(self.parent.grid.ForceRefresh)
 
 class AboutFrame(wx.Frame):
     def __init__(self, parent):
