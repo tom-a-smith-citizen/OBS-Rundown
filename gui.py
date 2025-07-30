@@ -10,6 +10,7 @@ import wx
 import wx.grid as gridlib
 import wx.lib.agw.hyperlink as hl
 import wx.lib.agw.peakmeter as PM
+from   wx.adv import SplashScreen as SplashScreen
 import obsws_python as obs
 import os
 import json
@@ -17,7 +18,7 @@ import platform
 import requests
 from enum import IntEnum
 from math import log
-
+import webbrowser
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -179,6 +180,9 @@ class OBS(object):
 class GUI(wx.Frame):
     def __init__(self,title,obs_connection,super_endpoint):
         super().__init__(parent=None,title=title)
+        splash = Splash()
+        splash.CenterOnScreen(wx.BOTH)
+        splash.Show(True)
         self.Bind(wx.EVT_CLOSE,self.on_close)
         self.SetIcon(wx.Icon("./data/icons/app.png",wx.BITMAP_TYPE_PNG))
         self.super_endpoint = super_endpoint
@@ -262,7 +266,7 @@ class GUI(wx.Frame):
         AboutFrame(self)
 
     def on_documentation(self,event):
-        pass
+        webbrowser.open("https://github.com/tom-a-smith-citizen/OBS-Rundown")
 
 class Ribbon(wx.Panel):
     def __init__(self, parent):
@@ -802,6 +806,9 @@ def load_super_endpoint():
 class FirstBoot(wx.Frame):
     def __init__(self):
         super().__init__(parent=None,title="NROBS Setup")
+        splash = Splash()
+        splash.CenterOnScreen(wx.BOTH)
+        splash.Show(True)
         self.SetIcon(wx.Icon('./data/icons/app.png',wx.BITMAP_TYPE_PNG))
         self.panel = wx.Panel(self)
         self.sizer_main = wx.BoxSizer(wx.VERTICAL)
@@ -889,6 +896,25 @@ class FirstBoot(wx.Frame):
             
     def on_quit(self):
         self.Destroy()
+
+class Splash(SplashScreen):
+    def __init__(self,parent=None):
+        bitmap = wx.Bitmap("./data/icons/splash.png",type=wx.BITMAP_TYPE_PNG)
+        splash = wx.adv.SPLASH_CENTRE_ON_SCREEN | wx.adv.SPLASH_TIMEOUT
+        duration = 3000
+        super(Splash, self).__init__(bitmap=bitmap,
+                                     splashStyle=splash,
+                                     milliseconds=duration,
+                                     parent=None,
+                                     id=-1,
+                                     pos=wx.DefaultPosition,
+                                     size=wx.DefaultSize,
+                                     style=wx.STAY_ON_TOP | wx.BORDER_NONE)
+        self.Bind(wx.EVT_CLOSE, self.on_exit)
+        
+    def on_exit(self, event):
+        event.Skip()
+        self.Hide()
                 
 def main():
     obs_settings = load_obs_settings()
