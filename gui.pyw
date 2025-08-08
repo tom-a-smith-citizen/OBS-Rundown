@@ -10,6 +10,7 @@ import wx
 import wx.grid as gridlib
 import wx.lib.agw.hyperlink as hl
 import wx.lib.agw.peakmeter as PM
+from   wx.adv import SplashScreen as SplashScreen
 import obsws_python as obs
 import os
 import json
@@ -17,7 +18,8 @@ import platform
 import requests
 from enum import IntEnum
 from math import log
-
+import webbrowser
+import keyboard
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -179,6 +181,9 @@ class OBS(object):
 class GUI(wx.Frame):
     def __init__(self,title,obs_connection,super_endpoint):
         super().__init__(parent=None,title=title)
+        splash = Splash()
+        splash.CenterOnScreen(wx.BOTH)
+        splash.Show(True)
         self.Bind(wx.EVT_CLOSE,self.on_close)
         self.SetIcon(wx.Icon("./data/icons/app.png",wx.BITMAP_TYPE_PNG))
         self.super_endpoint = super_endpoint
@@ -228,6 +233,7 @@ class GUI(wx.Frame):
         except Exception as e:
             print("Couldn't deregister event listeners:",e)
         finally:
+            keyboard.unhook_all()
             self.Destroy()
             
     def build_menubar(self):
@@ -262,7 +268,7 @@ class GUI(wx.Frame):
         AboutFrame(self)
 
     def on_documentation(self,event):
-        pass
+        webbrowser.open("https://github.com/tom-a-smith-citizen/OBS-Rundown")
 
 class Ribbon(wx.Panel):
     def __init__(self, parent):
@@ -270,6 +276,7 @@ class Ribbon(wx.Panel):
         self.parent = parent
         self.sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.is_playing = False
+        self.live_mode = False
         self.load_bitmaps()
         self.SetSizer(self.sizer)
         self.Layout()
@@ -282,32 +289,56 @@ class Ribbon(wx.Panel):
             self.directory = "./data/icons/light"
         self.button_play = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
         self.button_play.Bind(wx.EVT_BUTTON,self.on_play)
+        self.button_play.SetToolTip("Play")
         self.sizer.Add(self.button_play,1,wx.ALL)
         self.button_settings = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"settings-sliders.png"),wx.BITMAP_TYPE_PNG))
         self.button_settings.Bind(wx.EVT_BUTTON,self.on_settings)
+        self.button_settings.SetToolTip("Settings")
         self.sizer.Add(self.button_settings,1,wx.ALL)
         self.button_new = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"add-document.png"),wx.BITMAP_TYPE_PNG))
         self.button_new.Bind(wx.EVT_BUTTON,self.parent.on_new)
+        self.button_new.SetToolTip("New")
         self.sizer.Add(self.button_new,1,wx.ALL)
         self.button_open = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"open.png"),wx.BITMAP_TYPE_PNG))
         self.button_open.Bind(wx.EVT_BUTTON, self.on_open)
+        self.button_open.SetToolTip("Open")
         self.sizer.Add(self.button_open,1,wx.ALL)
         self.button_save = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"save.png"),wx.BITMAP_TYPE_PNG))
         self.button_save.Bind(wx.EVT_BUTTON,self.on_save)
+        self.button_save.SetToolTip("Save")
         self.sizer.Add(self.button_save,1,wx.ALL)
         self.button_refresh = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"refresh.png"),wx.BITMAP_TYPE_PNG))
         self.button_refresh.Bind(wx.EVT_BUTTON, self.on_refresh)
+        self.button_refresh.SetToolTip("Refresh Scenes/Transitions")
         self.sizer.Add(self.button_refresh,1,wx.ALL)
         self.button_visible = wx.BitmapButton(self, bitmap=wx.Bitmap(os.path.join(self.directory,"eye.png"),wx.BITMAP_TYPE_PNG))
         self.button_visible.Bind(wx.EVT_BUTTON,self.on_visible)
+        self.button_visible.SetToolTip("Toggle Scene Item Visibility")
         self.sizer.Add(self.button_visible,1,wx.ALL)
-        
+        if platform.system() == "Windows":
+            self.button_live = wx.BitmapToggleButton(self, wx.ID_ANY,wx.Bitmap(os.path.join(self.directory,"live.png"),wx.BITMAP_TYPE_PNG))
+            self.button_live.Bind(wx.EVT_TOGGLEBUTTON,self.on_live_toggle)
+            self.button_live.SetToolTip("Live Mode")
+            self.sizer.Add(self.button_live,1,wx.ALL)
+       
+    def on_live_toggle(self, event):
+        state = event.GetEventObject().GetValue()
+        self.live_mode = state
+        self.parent.grid_panel.grid.SetFocus()
+       
     def on_play(self,event):
         self.is_playing = not self.is_playing
         if self.is_playing:
-            print("Now Playing...")
-            self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"stop.png"),wx.BITMAP_TYPE_PNG))
-            self.parent.obs_conn.connect(wx.Event)
+            try:
+                print("Now Playing...")
+                self.parent.obs_conn.connect(wx.Event)
+                if hasattr(self.parent.obs_conn, "cl"):
+                    self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"stop.png"),wx.BITMAP_TYPE_PNG))
+                    self.button_play.SetToolTip("Stop")
+            except ConnectionRefusedError:
+                print("Couldn't connect to OBS.")
+                self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
+                self.button_play.SetToolTip("Play")
         else:
             print("Stopped.")
             try:
@@ -319,10 +350,12 @@ class Ribbon(wx.Panel):
             except Exception as e:
                 print("Couldn't deregister event listeners:",e)
             self.button_play.SetBitmap(wx.Bitmap(os.path.join(self.directory,"play.png"),wx.BITMAP_TYPE_PNG))
+            self.button_play.SetToolTip("Play")
         self.parent.grid_panel.grid.SetFocus()
         
     def on_settings(self,event):
         SettingsUI(self.parent)
+        self.parent.grid_panel.grid.SetFocus()
         
     def on_open(self, event):
         with wx.FileDialog(self, "Open rundown", wildcard="JSON files (*.json)|*.json",defaultDir="./saved_rundowns",
@@ -361,6 +394,7 @@ class Ribbon(wx.Panel):
         menu_y = client_pos.y + button_size.height
         items = self.parent.obs_conn.get_visible_items()
         self.PopupMenu(VisiblityPopupMenu(self, items), menu_x, menu_y)
+        self.parent.grid_panel.grid.SetFocus()
 
     
 class Grid(wx.Panel):
@@ -371,7 +405,13 @@ class Grid(wx.Panel):
         self.Bind(gridlib.EVT_GRID_LABEL_LEFT_DCLICK,self.on_double_click)
         self.Bind(gridlib.EVT_GRID_LABEL_RIGHT_CLICK,self.on_right_click)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGED,self.auto_resize_columns)
+        keyboard.hook_key("space",self.on_spacebar)
         self.init_gui()
+        
+    def on_spacebar(self,event):
+        focus = wx.Window.FindFocus()
+        if focus is None and self.parent.ribbon_panel.live_mode == True:
+            self.advance_rundown()
         
     def init_gui(self):
         self.grid = gridlib.Grid(self)
@@ -519,9 +559,12 @@ class Grid(wx.Panel):
         self.PopupMenu(RowPopupMenu(self, row), x, y)
     
     def send_super_text(self,text):
-        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-        data = f"text={text}"
-        requests.post(self.parent.super_endpoint,headers=headers,data=data)
+        try:
+            headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+            data = f"text={text}"
+            requests.post(self.parent.super_endpoint,headers=headers,data=data)
+        except Exception as e:
+            print("There was a problem sending super text:",e)
     
     def on_key_down(self, event):
         code = event.GetKeyCode()
@@ -743,15 +786,21 @@ class RowPopupMenu(wx.Menu):
         pos = self.row - 1
         self.parent.grid.InsertRows(pos=pos,numRows=1,updateLabels=True)
         wx.CallAfter(self.parent.grid.ForceRefresh)
+        wx.CallAfter(self.parent.grid.set_scene_choices)
+        wx.CallAfter(self.parent.grid.set_transition_choices)
     
     def on_add_after(self, event):
         pos = self.row + 1
         self.parent.grid.InsertRows(pos=pos,numRows=1,updateLabels=True)
         wx.CallAfter(self.parent.grid.ForceRefresh)
+        wx.CallAfter(self.parent.parent.grid_panel.set_scene_choices)
+        wx.CallAfter(self.parent.parent.grid_panel.set_transition_choices)
     
     def on_remove(self, event):
         self.parent.grid.DeleteRows(pos=self.row,numRows=1,updateLabels=True)
         wx.CallAfter(self.parent.grid.ForceRefresh)
+        wx.CallAfter(self.parent.parent.grid_panel.set_scene_choices)
+        wx.CallAfter(self.parent.parent.grid_panel.set_transition_choices)
 
 class AboutFrame(wx.Frame):
     def __init__(self, parent):
@@ -802,6 +851,9 @@ def load_super_endpoint():
 class FirstBoot(wx.Frame):
     def __init__(self):
         super().__init__(parent=None,title="NROBS Setup")
+        splash = Splash()
+        splash.CenterOnScreen(wx.BOTH)
+        splash.Show(True)
         self.SetIcon(wx.Icon('./data/icons/app.png',wx.BITMAP_TYPE_PNG))
         self.panel = wx.Panel(self)
         self.sizer_main = wx.BoxSizer(wx.VERTICAL)
@@ -889,6 +941,25 @@ class FirstBoot(wx.Frame):
             
     def on_quit(self):
         self.Destroy()
+
+class Splash(SplashScreen):
+    def __init__(self,parent=None):
+        bitmap = wx.Bitmap("./data/icons/splash.png",type=wx.BITMAP_TYPE_PNG)
+        splash = wx.adv.SPLASH_CENTRE_ON_SCREEN | wx.adv.SPLASH_TIMEOUT
+        duration = 3000
+        super(Splash, self).__init__(bitmap=bitmap,
+                                     splashStyle=splash,
+                                     milliseconds=duration,
+                                     parent=None,
+                                     id=-1,
+                                     pos=wx.DefaultPosition,
+                                     size=wx.DefaultSize,
+                                     style=wx.STAY_ON_TOP | wx.BORDER_NONE)
+        self.Bind(wx.EVT_CLOSE, self.on_exit)
+        
+    def on_exit(self, event):
+        event.Skip()
+        self.Hide()
                 
 def main():
     obs_settings = load_obs_settings()
