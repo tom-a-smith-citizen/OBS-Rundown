@@ -207,6 +207,18 @@ class GUI(wx.Frame):
             self.obs_conn.cl_events.disconnect()
         except Exception as e:
             print("Couldn't disconnect from OBS:",e)
+        
+        try:
+            self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_volume_changed])
+            self.obs_conn.cl.disconnect()
+        except Exception as e:
+            print("Couldn't deregister event listeners:",e)
+        finally:
+            keyboard.unhook_all()
+            self.save_settings()
+            self.Destroy()
+            
+    def save_settings(self):
         try:
             if not os.path.isdir("data/settings"):
                 os.makedirs("data/settings")
@@ -227,14 +239,6 @@ class GUI(wx.Frame):
                 print("Json saved.")
         except Exception as e:
             print("Couldn't save settings:",e)
-        try:
-            self.obs_conn.cl_events.callback.deregister([self.obs_conn.on_input_volume_meters,self.obs_conn.on_input_volume_changed])
-            self.obs_conn.cl.disconnect()
-        except Exception as e:
-            print("Couldn't deregister event listeners:",e)
-        finally:
-            keyboard.unhook_all()
-            self.Destroy()
             
     def build_menubar(self):
         menubar = wx.MenuBar()
@@ -268,7 +272,8 @@ class GUI(wx.Frame):
         AboutFrame(self)
 
     def on_documentation(self,event):
-        webbrowser.open("https://github.com/tom-a-smith-citizen/OBS-Rundown")
+        cwd = os.getcwd()
+        webbrowser.open(f"{cwd}/data/NROBS Documentation.pdf")
 
 class Ribbon(wx.Panel):
     def __init__(self, parent):
@@ -611,8 +616,7 @@ class Grid(wx.Panel):
         self.grid.ForceRefresh()
         self.parent.obs_conn.cl.trigger_studio_mode_transition()
         if super_text.strip() != "":
-            print(super_text)
-            self.send_super_text(super_text)
+            wx.CallAfter(self.send_super_text(super_text))
 
 class AudioPanel(wx.Panel):
     def __init__(self, parent):
@@ -745,6 +749,7 @@ class SettingsUI(wx.Frame):
             self.parent.obs_conn.port = port
             self.parent.obs_conn.password = password
             self.parent.super_endpoint = endpoint
+        self.parent.save_settings()
         self.Destroy()
             
             
