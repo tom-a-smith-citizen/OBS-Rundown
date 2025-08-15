@@ -5,7 +5,7 @@ a = Analysis(
     ['gui.pyw'],
     pathex=[],
     binaries=[],
-    datas=[('./data', 'data'), ('./supers', 'supers')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -15,20 +15,10 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
-splash = Splash(
-    './data/icons/splash.png',
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=None,
-    text_size=12,
-    minify_script=True,
-    always_on_top=True,
-)
 
 exe = EXE(
     pyz,
     a.scripts,
-    splash,
     [],
     exclude_binaries=True,
     name='gui',
@@ -48,7 +38,6 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    splash.binaries,
     strip=False,
     upx=True,
     upx_exclude=[],

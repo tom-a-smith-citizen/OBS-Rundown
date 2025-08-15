@@ -410,8 +410,56 @@ class Grid(wx.Panel):
         self.Bind(gridlib.EVT_GRID_LABEL_LEFT_DCLICK,self.on_double_click)
         self.Bind(gridlib.EVT_GRID_LABEL_RIGHT_CLICK,self.on_right_click)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGED,self.auto_resize_columns)
+        self.Bind(gridlib.EVT_GRID_ROW_MOVE,self.on_row_move)
         keyboard.hook_key("space",self.on_spacebar)
         self.init_gui()
+        
+    def on_row_move(self, event):
+        # Let wx finish the visual move, then commit it to the data model.
+        event.Skip()
+        wx.CallAfter(self._commit_row_reorder_to_model)
+
+    def _commit_row_reorder_to_model(self):
+        g = self.grid
+        nrows = g.GetNumberRows()
+        ncols = g.GetNumberCols()
+
+        # 1) Capture the visual -> physical mapping after the drop
+        #    order[v] = physical row index now displayed at visual position v
+        order = [g.GetRowAt(v) for v in range(nrows)]
+
+        # 2) Snapshot row content and any per-cell background colors you care about
+        rows = []
+        bgs  = []
+        for v in range(nrows):
+            phys = order[v]
+            rows.append([g.GetCellValue(phys, c) for c in range(ncols)])
+            bgs.append([g.GetCellBackgroundColour(phys, c) for c in range(ncols)])
+
+        # 3) Normalize row mapping and write data back in the visual order
+        g.Freeze()
+        g.BeginBatch()
+        try:
+            # Reset visual remapping so physical order is 0..n-1 again
+            g.ResetRowPos()
+
+            # Overwrite rows so physical row r contains the data that was at visual r
+            for r in range(nrows):
+                for c in range(ncols):
+                    g.SetCellValue(r, c, rows[r][c])
+                    g.SetCellBackgroundColour(r, c, bgs[r][c])
+
+            # Optional: renumber row labels to match indices
+            for r in range(nrows):
+                g.SetRowLabelValue(r, str(r+1))
+        finally:
+            g.EndBatch()
+            g.Thaw()
+            g.ForceRefresh()
+
+        # Rebuild choice editors (since you rely on these)
+        self.set_scene_choices()
+        self.set_transition_choices()
         
     def on_spacebar(self,event):
         focus = wx.Window.FindFocus()
@@ -593,8 +641,10 @@ class Grid(wx.Panel):
             color = self.grid.GetCellBackgroundColour(row, 0)
             if color == wx.Colour(0, 255, 0):  # Green
                 green_row = row
+                print(green_row)
             elif color == wx.Colour(255, 0, 0):  # Red
                 red_row = row
+                print(red_row)
         name = self.grid.GetCellValue(green_row,2)
         transition = self.grid.GetCellValue(green_row,3)
         if transition.strip() == "":
