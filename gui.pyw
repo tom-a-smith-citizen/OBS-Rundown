@@ -20,6 +20,7 @@ from enum import IntEnum
 from math import log
 import webbrowser
 import keyboard
+import html
 
 class OBS(object):
     def __init__(self, parent, host, port, password):
@@ -614,7 +615,8 @@ class Grid(wx.Panel):
     def send_super_text(self,text):
         try:
             headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-            data = f"text={text}"
+            data = text
+            print(data)
             requests.post(self.parent.super_endpoint,headers=headers,data=data)
         except Exception as e:
             print("There was a problem sending super text:",e)
