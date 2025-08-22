@@ -8,7 +8,11 @@ Created on Tue Jul 15 08:14:36 2025
 import obsws_python as obs
 
 cl = obs.ReqClient(host="10.10.1.29",port=4455,password="newstar")
-print(attrs(cl))
+inputs = cl.get_input_list()
+for x in inputs.inputs:
+    if x['inputKind'] == "ffmpeg_source":
+        print(x)
+        
 audio_inputs = cl.get_input_list('wasapi_input_capture').inputs
 special_sources = cl.get_special_inputs()
 global_sources = special_sources.__dict__

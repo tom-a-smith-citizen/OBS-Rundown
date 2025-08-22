@@ -53,6 +53,14 @@ class OBS(object):
     def start_event_listeners(self):
             self.cl_events.callback.register(self.on_input_volume_meters)
             self.cl_events.callback.register(self.on_input_volume_changed)
+            self.cl_events.callback.register(self.on_input_created)
+            self.cl_events.callback.register(self.on_input_removed)
+    
+    def on_input_created(self,data):
+        wx.CallAfter(self.parent.mic_panel.build_faders)
+        
+    def on_input_removed(self,data):
+        wx.CallAfter(self.parent.mic_panel.build_faders)
     
     def on_input_volume_meters(self,data):
         try:
@@ -102,9 +110,9 @@ class OBS(object):
         if name.strip() != "":
             self.cl.set_current_preview_scene(name)
             self.cl.set_current_scene_transition(transition)
-            has_audio_panel = hasattr(self.parent, 'mic_panel')
-            if has_audio_panel:
-                wx.CallAfter(self.parent.mic_panel.build_faders)
+            #has_audio_panel = hasattr(self.parent, 'mic_panel')
+            #if has_audio_panel:
+                #wx.CallAfter(self.parent.mic_panel.build_faders)
      
     def get_scene_list(self):
         try:
@@ -143,8 +151,18 @@ class OBS(object):
         self.cl.set_current_preview_scene(preview_scene)
         self.parent.grid_panel.grid.SetFocus()
         
+    def get_ffmpeg_audio(self):
+        result = []
+        inputs = self.cl.get_input_list()
+        for x in inputs.inputs:
+            if x['inputKind'] == "ffmpeg_source":
+                result.append(x)
+        return result
+        
+        
     def get_audio_inputs(self):
         audio_inputs = self.cl.get_input_list('wasapi_input_capture').inputs
+        ffmpeg_sources = self.get_ffmpeg_audio()
         special_sources = self.cl.get_special_inputs()
         global_sources = special_sources.__dict__
         sources_output = {}
@@ -158,6 +176,10 @@ class OBS(object):
                 sources_output[x['inputUuid']] = {'global': False,
                                        'name': x['inputName'],
                                        'UUID': x['inputUuid']}
+        for x in ffmpeg_sources:
+            sources_output[x['inputUuid']] = {'global': False,
+                                              'name': x['inputName'],
+                                              'UUID': x['inputUuid']}
         
         return sources_output
         
@@ -267,7 +289,7 @@ class GUI(wx.Frame):
         self.SetMenuBar(menubar)
         
     def on_new(self, event):
-        GUI("OBS Rundown",(self.obs_connection[0],self.obs_connection[1],self.obs_connection[2]),self.super_endpoint)
+        GUI("NROBS",(self.obs_connection[0],self.obs_connection[1],self.obs_connection[2]),self.super_endpoint)
         
     def on_about(self, event):
         AboutFrame(self)
@@ -666,7 +688,8 @@ class Grid(wx.Panel):
         elif red_row is None:
             self.highlight_row(0, wx.Colour(0, 255, 0))
         self.grid.ForceRefresh()
-        self.parent.obs_conn.cl.trigger_studio_mode_transition()
+        if name != "":
+            self.parent.obs_conn.cl.trigger_studio_mode_transition()
         if super_text.strip() != "":
             wx.CallAfter(self.send_super_text(super_text))
 
@@ -685,9 +708,10 @@ class AudioPanel(wx.Panel):
             self.directory = "./data/icons/dark"
         else:
             self.directory = "./data/icons/light"
-        self.sizer.Clear()
+        self.sizer.Clear(True)
         self.sizer.Layout()
         inputs_list = self.parent.obs_conn.get_audio_inputs()
+        print(inputs_list)
         source_and_level = self.parent.obs_conn.get_audio_levels(inputs_list)
         for key, value in source_and_level.items():
             sizer = wx.FlexGridSizer(0,2,1,1)
